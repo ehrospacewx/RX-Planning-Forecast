@@ -74,6 +74,10 @@ td.go{background:var(--go);color:var(--goi);font-weight:600}
 td.warn{background:var(--warn);color:var(--warni);font-weight:600}
 td.bad{background:var(--bad);color:var(--badi);font-weight:600}
 td.rxv{font-weight:700}
+.spotbar{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline;padding:8px 12px;border:1px solid var(--rule);border-radius:8px;margin:0 0 10px;font-size:14px}
+.spotbar.on{background:var(--warn);border-color:var(--warni);color:var(--warni)}
+.spotbar.on a{color:inherit;font-size:15px}
+.spotbar.off{background:var(--zebra);color:var(--mut)}
 .legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--mut);margin-top:8px}
 .legend span::before{content:"";display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px;border:1px solid var(--rule)}
 .legend .lg::before{background:var(--go)}.legend .lw::before{background:var(--warn)}.legend .lb::before{background:var(--bad)}
@@ -177,6 +181,7 @@ input[type=number]{width:84px}
       <button class="btn" id="csvBtn">Download CSV</button>
       <button class="btn primary" id="pdfBtn2">Download PDF</button>
     </div>
+    <div class="spotbar noprint" id="spotbar" hidden></div>
     <div class="days noprint" id="days" hidden></div>
     <h2 id="viewTitle" style="margin-top:8px">7-day outlook</h2>
     <p class="mut small" id="viewSub" style="margin:0 0 10px"></p>
@@ -985,9 +990,76 @@ function renderModels(){
 }
 function changed(rerx){ save(); if (rerx) renderRx(); render(); }
 function seg(id, attr, val){ document.querySelectorAll(`#${id} [${attr}]`).forEach(b => b.setAttribute("aria-pressed", String(b.getAttribute(attr) === String(val)))); }
+/* ============================================================
+   NWS Melbourne spot forecasts (FWS) for the Cape and KSC
+   ============================================================ */
+const SPOT_URL = "https://forecast.weather.gov/product.php?site=NWS&issuedby=MLB&product=FWS&format=CI&version=1&glossary=0";
+/* a spot counts as ours when its title, requester or email matches one of these */
+const SPOT_KEYS = [/canaveral/i, /\bccsfs\b/i, /\bccafs\b/i, /\bksc\b/i, /kennedy/i, /merritt island/i, /\bminwr\b/i, /space force/i, /space launch delta/i, /\bsld ?45\b/i, /\b45th\b/i, /\bnasa\b/i, /@nasa\.gov/i, /@spaceforce\.mil/i, /@us\.af\.mil/i];
+const MONTHS = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+let SPOT = { state:"loading", list:[] };
+function addDays(date, n){ const d = new Date(date + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+/* title, ignition date and time, and the text to match against, from one FWS product */
+function parseSpot(text, issued){
+  const L = text.split("\n").map(s => s.trim()), i = L.findIndex(l => /^spot forecast for/i.test(l));
+  if (i < 0) return null;
+  let title = L[i];
+  for (let j = i + 1; j < Math.min(L.length, i + 3) && L[j] && !/^national weather service/i.test(L[j]); j++) title += " " + L[j];
+  const flat = text.replace(/\s+/g, " ");
+  const m = flat.match(/ignition time of (\d{3,4}) ([A-Z]{3}) on ([A-Za-z]+) (\d{1,2})/i);
+  let date = null, ign = "";
+  if (m){
+    const mon = MONTHS.indexOf(m[3].slice(0, 3).toLowerCase()), im = +issued.slice(5, 7) - 1; let y = +issued.slice(0, 4);
+    if (mon >= 0){ if (mon < im - 6) y++; else if (mon > im + 6) y--; date = `${y}-${pad(mon + 1)}-${pad(+m[4])}`; ign = `${m[1].padStart(4, "0")} ${m[2].toUpperCase()} ${m[3].slice(0, 3)} ${+m[4]}`; }
+  }
+  if (!date){ const d = text.match(/\.DELDT (\d{2})\/(\d{2})\/(\d{2})/); if (d) date = `20${d[3]}-${d[1]}-${d[2]}`; }
+  if (!date) return null;
+  const req = (text.match(/Requested by\.+([^\n]*)/i) || [])[1] || "", email = (text.match(/\.EMAIL (\S+)/) || [])[1] || "";
+  title = title.replace(/^spot forecast for\s*/i, "").replace(/\s+/g, " ").trim();
+  return { title, date, ign, hay: [title, req, email].join(" ") };
+}
+async function checkSpots(){
+  SPOT = { state:"loading", list:[] }; renderSpot();
+  try {
+    const r = await fetch("https://api.weather.gov/products/types/FWS/locations/MLB", { headers:{ Accept:"application/ld+json" } });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const list = ((await r.json())["@graph"] || []).slice(0, 25);
+    const today = nowLocal().slice(0, 10), last = addDays(today, 6), hits = [];
+    await Promise.all(list.map(async (p, k) => {
+      try {
+        const t = (await fetch(p["@id"], { headers:{ Accept:"application/ld+json" } }).then(x => x.json())).productText || "";
+        const s = parseSpot(t, p.issuanceTime || ""); if (!s) return;
+        if (s.date >= today && s.date <= last && SPOT_KEYS.some(re => re.test(s.hay))) hits.push({ ...s, k, issued:p.issuanceTime });
+      } catch (e) { /* skip a product that won't load */ }
+    }));
+    hits.sort((a, b) => a.k - b.k);
+    /* newer issuances of the same spot replace older ones */
+    const seen = new Set(), uniq = hits.filter(h => { const key = h.title.toLowerCase() + "|" + h.date; if (seen.has(key)) return false; seen.add(key); return true; });
+    /* link straight to the newest matching spot when the NWS page's version number lines up with the list */
+    let link = SPOT_URL;
+    if (uniq.length){
+      const v = uniq[0].k + 1, url = SPOT_URL.replace("version=1", `version=${v}`);
+      try { const page = await fetch(url).then(x => x.text()); if (page.toLowerCase().includes(uniq[0].title.toLowerCase().slice(0, 30))) link = url; } catch (e) { /* keep the latest-version link */ }
+    }
+    SPOT = { state: uniq.length ? "active" : "none", list: uniq, link, checked: Date.now() };
+  } catch (e) { SPOT = { state:"error", list:[], err:e.message }; }
+  renderSpot();
+}
+function renderSpot(){
+  const el = $("spotbar"); if (!el) return;
+  el.hidden = prefs.view !== "hourly";
+  const dl = s => `${dshort(s.date)}${s.ign ? `, ignition ${s.ign.split(" ").slice(0, 2).join(" ")}` : ""}`;
+  if (SPOT.state === "loading"){ el.className = "spotbar"; el.innerHTML = `<span class="mut">Checking NWS Melbourne spot forecasts…</span>`; return; }
+  /* no matching spot (or NWS didn't answer): one message, with a link to all MLB spots */
+  if (SPOT.state === "none" || SPOT.state === "error"){ el.className = "spotbar off"; el.innerHTML = `<span>No matching NWS spot forecasts right now.</span> <a href="${SPOT_URL}" target="_blank" rel="noopener">See NWS Melbourne spot forecasts</a>`; return; }
+  el.className = "spotbar on";
+  el.innerHTML = `<a href="${SPOT.link}" target="_blank" rel="noopener"><b>See Spot Forecast for your time and location here</b></a><span class="small">${SPOT.list.map(s => `${esc(s.title)} (${esc(dl(s))})`).join(" · ")}</span>`;
+}
+
 function render(){
   seg("viewSel", "data-v", prefs.view); seg("spanSel", "data-s", prefs.span); seg("wuSel", "data-u", prefs.wu); seg("tzSel", "data-tz", prefs.tz);
   $("spanSel").hidden = prefs.view !== "hourly"; $("days").hidden = prefs.view !== "hourly";
+  renderSpot();
   if (!G){ return; }
   const issued = new Date(G.fetched);
   $("issued").textContent = `Guidance fetched ${issued.toLocaleString("en-US", { timeZone:TZ, month:"short", day:"numeric", hour:"2-digit", minute:"2-digit", hourCycle:"h23" })} ET`;
@@ -1013,7 +1085,7 @@ function init(){
   $("spanSel").onclick = e => { const b = e.target.closest("[data-s]"); if (!b) return; prefs.span = b.dataset.s; save(); render(); };
   $("wuSel").onclick = e => { const b = e.target.closest("[data-u]"); if (!b) return; prefs.wu = b.dataset.u; changed(true); };
   $("tzSel").onclick = e => { const b = e.target.closest("[data-tz]"); if (!b) return; prefs.tz = b.dataset.tz; save(); render(); };
-  $("refresh").onclick = fetchGuidance;
+  $("refresh").onclick = () => { fetchGuidance(); checkSpots(); };
   $("csvBtn").onclick = downloadCSV;
   $("pdfBtn").onclick = downloadPDF; $("pdfBtn2").onclick = downloadPDF;
   $("initials").value = prefs.initials || "";
@@ -1039,9 +1111,9 @@ function init(){
   mark();
   /* the outlook is always the first view on opening */
   prefs.view = "outlook";
-  renderSites(); renderRx(); renderModels(); render(); fetchGuidance();
+  renderSites(); renderRx(); renderModels(); render(); fetchGuidance(); checkSpots();
   /* refresh every 30 minutes while the page is open */
-  setInterval(() => { if (!document.hidden) fetchGuidance(); }, 30*60*1000);
+  setInterval(() => { if (!document.hidden){ fetchGuidance(); checkSpots(); } }, 30*60*1000);
 }
 init();
 </script>
