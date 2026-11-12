@@ -92,6 +92,33 @@ input[type=number]{width:84px}
 .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--head);color:#fff;padding:8px 14px;border-radius:8px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none}
 .toast.on{opacity:1}
 .printhead{display:none}
+.prodbar{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:baseline;margin-bottom:8px}
+.prodbar h2{margin:0}
+.prodbar label{font-size:13px;display:flex;gap:6px;align-items:center}
+.discbar{display:flex;gap:10px;align-items:baseline;margin:4px 0 4px}
+#disc{width:100%;min-height:120px;border:1px solid var(--rule);border-radius:8px;padding:9px 11px;background:var(--panel);color:var(--ink);font:inherit;font-size:14px;line-height:1.45;resize:vertical}
+.paperwrap{overflow-x:auto;margin-top:14px}
+.paper{background:#fff;color:#000;max-width:880px;margin:0 auto;padding:22px 22px 16px;border-radius:2px;box-shadow:0 1px 6px rgba(0,0,0,.25);font:13px/1.4 Helvetica,Arial,sans-serif}
+.paper .fwh{display:flex;align-items:center;gap:12px;background:#102848;color:#fff;padding:8px 12px}
+.paper .fwh img{height:62px}
+.paper .fwh div{flex:1;text-align:center}
+.paper .fwh h2{margin:0;font:700 24px/1.2 Helvetica,Arial,sans-serif;color:#fff;letter-spacing:.3px}
+.paper .fwh p{margin:3px 0 0;font-size:12.5px;color:#dce4ee}
+.paper table{border-collapse:collapse;width:100%}
+.paper .fwi{margin-top:10px}
+.paper .fwi th,.paper .fwi td{border:1px solid #000;padding:3px 8px;text-align:left;font-size:12.5px}
+.paper .fwi th{background:#e2e6e9;width:13%}
+.paper .fwbox{border:1px solid #000;padding:7px 10px;margin-top:10px}
+.paper .fwbox b{display:block;margin-bottom:3px}
+.paper .fwbox p{margin:0;white-space:pre-wrap}
+.paper .fwt{margin-top:10px;font-variant-numeric:tabular-nums}
+.paper .fwt th,.paper .fwt td{border:1px solid #9aa3ab;padding:4px 5px;text-align:center;font-size:12px;white-space:nowrap}
+.paper .fwt th{background:#e2e6e9;border-color:#6b747c}
+.paper .fwt .fwd td{background:#f4f6f7;text-align:left;font-weight:700}
+.paper .fwt td.pgo{background:#d2ecd8}.paper .fwt td.pwarn{background:#fdecba}.paper .fwt td.pbad{background:#fbd7d4}
+.paper .fwt td.pb{font-weight:700}
+.paper .fwt tr.dim td{background:#f4f6f7;color:#6e767e}
+.paper .fwn{font-size:10.5px;color:#505a64;margin:8px 0 0}
 @media print{
   .pagenav,.statusline,.noprint,.viewbar .seg,.viewbar .btn{display:none!important}
   body{background:#fff;color:#000;font-size:12px}
@@ -148,13 +175,26 @@ input[type=number]{width:84px}
       </span>
       <span class="spacer" style="flex:1"></span>
       <button class="btn" id="csvBtn">Download CSV</button>
-      <button class="btn" id="printBtn">Print</button>
+      <button class="btn primary" id="pdfBtn2">Download PDF</button>
     </div>
     <div class="days noprint" id="days" hidden></div>
     <h2 id="viewTitle" style="margin-top:8px">7-day outlook</h2>
     <p class="mut small" id="viewSub" style="margin:0 0 10px"></p>
     <div class="tablewrap"><table class="mx" id="mx"></table></div>
     <div class="legend" id="legend"></div>
+  </section>
+
+  <section class="panel noprint" id="prodPanel">
+    <div class="prodbar">
+      <h2 id="prodTitle">Fire weather outlook</h2>
+      <span class="mut small">the finished product: Download PDF saves it. It follows the view above, the 7-day outlook or one day's hourly forecast.</span>
+      <span style="flex:1"></span>
+      <label>Forecaster <input type="text" id="initials" maxlength="5" placeholder="Init" style="width:70px"></label>
+      <button class="btn primary" id="pdfBtn">Download PDF</button>
+    </div>
+    <div class="discbar"><b>Discussion</b><span class="mut small">written from the forecast; edit it as you like</span><button class="btn" id="discReset" hidden style="padding:2px 9px;font-size:12px">Rewrite from forecast</button></div>
+    <textarea id="disc" spellcheck="true" aria-label="Discussion"></textarea>
+    <div class="paperwrap"><div class="paper" id="prodPrev"></div></div>
   </section>
 
   <section class="setup noprint">
@@ -250,7 +290,7 @@ const load = () => { try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}
 const prefs = Object.assign({
   view:"outlook", span:"window", wu:"mph", tz:"L", site:"custom",
   custom:{ name:"Burn unit", lat:28.66, lon:-80.70 }, wA:1, wB:1,
-  rx: RX_EXAMPLE.map(c => ({ ...c })), models: MODELS.map(m => m.id), day:0,
+  rx: RX_EXAMPLE.map(c => ({ ...c })), models: MODELS.map(m => m.id), day:0, initials:"", disc:{},
 }, load());
 const save = () => { try { localStorage.setItem(LS_KEY, JSON.stringify(prefs)); } catch (e) {} };
 
@@ -547,7 +587,7 @@ function buildOutlook(){
       }
     });
     const verdict = !prefs.rx.length || !known ? "" : nIn >= Math.max(3, idx.length/3) ? "go" : nIn > 0 ? "marg" : "no";
-    return { day, idx, nIn, known, run, peak: chances.length ? Math.max(...chances) : null, vals, spread, verdict };
+    return { day, idx, nIn, known, run, peak: chances.length ? Math.max(...chances) : null, vals, spread, verdict, lim: limitsOf(idx, blend) };
   });
   return { cols, mem };
 }
@@ -597,7 +637,7 @@ function renderHourly(){
   const c = cols[prefs.day]; if (!c){ $("mx").innerHTML = ""; return; }
   const blend = blendAll(mem), idx = prefs.span === "day" ? dayHours(c.day) : c.idx;
   const win = new Set(c.idx);
-  HR = { idx, blend, mem, day:c.day };
+  HR = { idx, blend, mem, day:c.day, win:c.idx, col:c };
   $("viewTitle").textContent = `Hourly forecast, ${dayName(c.day.date, true)}`;
   $("viewSub").textContent = `${G.pt.name}. Burn window ${windowLabel(c.day)} (sunrise ${hhmm(c.day.rise)}, sunset ${hhmm(c.day.set)}${tzTag()}). Hover a value to see the range across the models.`;
   let h = `<thead><tr><th scope="col" style="text-align:left">Time (${tzTag()})</th>${idx.map(i => `<th scope="col"${prefs.span === "day" && win.has(i) ? ' style="box-shadow:inset 0 -3px 0 var(--acc)"' : ""}>${hhmm(G.times[i])}</th>`).join("")}</tr></thead><tbody>`;
@@ -654,6 +694,262 @@ function downloadCSV(){
 }
 
 /* ============================================================
+   The finished product: discussion, preview and PDF
+   ============================================================ */
+const ASSET = "https://cyclonecizek.github.io/ERPlanningForecast/";
+const NAVY = [16, 40, 72];
+const FILL = { go:[210,236,216], warn:[253,236,186], bad:[251,215,212] };
+const SKY_CATS = [["CLR",0,6],["FEW",6,25],["SCT",25,50],["BKN",50,87],["OVC",87,101]];
+const skyCat = p => p == null ? "" : (SKY_CATS.find(([, a, b]) => p >= a && p < b) || ["OVC"])[0];
+const SKY_WORD = { CLR:"clear", FEW:"mostly clear", SCT:"partly cloudy", BKN:"mostly cloudy", OVC:"cloudy" };
+const RXW = { rh:"humidity", vpd:"VPD", t:"temperature", s20:"20 ft wind", g20:"20 ft peak wind", mh:"mixing height", tw:"transport wind", vr:"ventilation", pop:"rain chance" };
+function dshort(date){ const d = new Date(date + "T12:00:00Z"); return d.toLocaleDateString("en-US", { timeZone:"UTC", weekday:"short" }) + " " + d.getUTCDate(); }
+function dmed(date){ const d = new Date(date + "T12:00:00Z"); return d.toLocaleDateString("en-US", { timeZone:"UTC", weekday:"short" }) + " " + d.getUTCDate() + " " + d.toLocaleDateString("en-US", { timeZone:"UTC", month:"short" }); }
+const list = a => a.length < 2 ? (a[0] || "") : a.length === 2 ? `${a[0]} and ${a[1]}` : `${a.slice(0, -1).join(", ")} and ${a[a.length - 1]}`;
+const unitSfx = f => F[f].wind ? " " + prefs.wu : F[f].u === "%" ? "%" : F[f].u === "°F" ? "°F" : F[f].u ? " " + F[f].u.replace(" AGL", "") : "";
+const valTxt = (f, v) => v == null ? "" : fmt(f, v) + unitSfx(f);
+const critPhrase = c => `${RXW[c.f] || F[c.f].l} ${c.op.startsWith(">") ? "below" : "above"} ${numTxt(c.f, dispV(c.f, c.v))}${unitSfx(c.f)}`;
+const runTxt = run => run ? `${hhmm(run.a)}–${endLabel(run.b)}${tzTag()}` : "";
+const windTxt = (d, s, g) => s == null ? "" : `${d == null ? "" : compass(d) + " "}${fmt("s20", s)}${g != null && Math.round(g*wf()) > Math.round(s*wf()) + 2 ? "G" + fmt("g20", g) : ""}`;
+const tzWord = () => prefs.tz === "Z" ? "UTC" : "local";
+/* which criteria keep the blended forecast out of prescription, most hours first */
+function limitsOf(idx, blend){
+  return prefs.rx.filter(c => F[c.f]).map(c => ({ c, n: idx.filter(i => blend[c.f][i] != null && !passes(blend[c.f][i], c)).length })).filter(x => x.n > 0).sort((a, b) => b.n - a.n);
+}
+const OJ = {}; OUT_ROWS.forEach((r, j) => { if (r.f) OJ[`${r.f}:${r.s}`] = j; });
+const ov = (c, f, s) => c.vals[OJ[`${f}:${s}`]];
+const osp = (c, f, s) => c.spread[OJ[`${f}:${s}`]];
+
+/* ---------- the discussion, written from the forecast ---------- */
+function discOutlook(o){
+  const cols = o.cols.filter(c => c.idx.length); if (!cols.length) return "";
+  const s = [], ds = c => dshort(c.day.date);
+  const ext = (f, st, hi) => { let b = null; for (const c of cols){ const v = ov(c, f, st); if (v != null && (b == null || (hi ? v > b.v : v < b.v))) b = { c, v }; } return b; };
+  if (prefs.rx.length){
+    const good = cols.filter(c => c.verdict === "go"), marg = cols.filter(c => c.verdict === "marg");
+    if (good.length) s.push(`The best burn ${good.length > 1 ? "days are" : "day is"} ${list(good.map(c => `${ds(c)} (${c.nIn} h in prescription${c.run ? `, ${runTxt(c.run)}` : ""})`))}.`);
+    if (marg.length) s.push(`${list(marg.map(c => `${ds(c)} (${c.nIn} h)`))} ${marg.length > 1 ? "are" : "is"} marginal.`);
+    if (!good.length && !marg.length) s.push("No day this week has an hour that meets every prescription criterion in the blended guidance.");
+    const grp = new Map();
+    for (const c of cols.filter(c => c.verdict !== "go")){ const l = c.lim[0]; if (!l) continue; const k = critPhrase(l.c); if (!grp.has(k)) grp.set(k, []); grp.get(k).push(ds(c)); }
+    if (grp.size) s.push(`Limiting factors: ${[...grp].map(([k, d]) => `${k} on ${list(d)}`).join("; ")}.`);
+  }
+  const rlo = ext("rh", "min", false), rhi = ext("rh", "min", true), vp = ext("vpd", "max", true);
+  if (rlo && rhi) s.push(`Afternoon humidity bottoms out between ${fmt("rh", rlo.v)}% (${ds(rlo.c)}) and ${fmt("rh", rhi.v)}% (${ds(rhi.c)})${vp ? `, and VPD peaks near ${fmt("vpd", vp.v)} kPa on ${ds(vp.c)}` : ""}.`);
+  const wlo = ext("s20", "min", false), whi = ext("s20", "max", true), gh = ext("g20", "max", true);
+  if (wlo && whi) s.push(`20 ft winds run ${fmt("s20", wlo.v)}–${fmt("s20", whi.v)} ${prefs.wu}, strongest on ${ds(whi.c)}${gh ? (gh.c === whi.c ? ` with gusts near ${fmt("g20", gh.v)} ${prefs.wu}` : `, with the highest gusts near ${fmt("g20", gh.v)} ${prefs.wu} on ${ds(gh.c)}`) : ""}.`);
+  const mh = ext("mh", "max", true), ml = ext("mh", "max", false), tw = ext("tw", "max", true), vr = ext("vr", "max", true);
+  if (mh) s.push(`Mixing heights peak near ${fmt("mh", mh.v)} ft on ${ds(mh.c)}${ml && ml.c !== mh.c ? ` and are lowest on ${ds(ml.c)} near ${fmt("mh", ml.v)} ft` : ""}${tw ? `; transport winds are strongest on ${ds(tw.c)}, ${compass(ov(tw.c, "twd", "atmax"))} ${fmt("tw", tw.v)} ${prefs.wu}` : ""}${vr ? `, and ventilation is best on ${ds(vr.c)} near ${fmt("vr", vr.v)} m²/s` : ""}.`);
+  const wet = cols.filter(c => (ov(c, "pop", "max") ?? 0) >= 20);
+  s.push(wet.length ? `Rain chances reach ${fmt("pop", Math.max(...wet.map(c => ov(c, "pop", "max"))))}% ${wet.length > 1 ? `from ${ds(wet[0])} to ${ds(wet[wet.length - 1])}` : `on ${ds(wet[0])}`}.` : "Little or no rain is expected during the burn windows.");
+  const late = cols.slice(4).map(c => ({ c, sp: osp(c, "rh", "min") })).filter(x => x.sp);
+  if (late.length){ const w = late.reduce((a, b) => (b.sp[1] - b.sp[0]) > (a.sp[1] - a.sp[0]) ? b : a); if (w.sp[1] - w.sp[0] >= 12) s.push(`Confidence is lower late in the period: the models differ by ${Math.round(w.sp[1] - w.sp[0])}% on ${ds(w.c)}'s lowest humidity.`); }
+  return s.join(" ");
+}
+function discHourly(h){
+  const idx = h.win, b = h.blend; if (!idx.length) return "";
+  const at = (f, hi) => { let r = null; for (const i of idx){ const v = b[f][i]; if (v != null && (r == null || (hi ? v > r.v : v < r.v))) r = { i, v }; } return r; };
+  const t = i => `${hhmm(G.times[i])} ${tzWord()}`;
+  const s = [];
+  const skies = idx.map(i => skyCat(b.sky[i])).filter(Boolean);
+  const hiT = at("t", true), loRH = at("rh", false);
+  let p = skies.length ? `Skies ${SKY_WORD[skies[Math.floor(skies.length/2)]]} during the burn window` : "During the burn window";
+  if (hiT && loRH) p += ` with temperatures to ${fmt("t", hiT.v)}°F and humidity bottoming out near ${fmt("rh", loRH.v)}% around ${t(loRH.i)}`;
+  s.push(p + ".");
+  const vp = at("vpd", true); if (vp) s.push(`VPD peaks near ${fmt("vpd", vp.v)} kPa around ${t(vp.i)}.`);
+  const w0 = idx[0], w1 = idx[idx.length - 1];
+  if (b.s20[w0] != null) s.push(`20 ft winds ${windTxt(b.dir[w0], b.s20[w0], b.g20[w0])} ${prefs.wu} early, ${windTxt(b.dir[w1], b.s20[w1], b.g20[w1])} ${prefs.wu} late.`);
+  const mh = at("mh", true), tw = at("tw", true), vr = at("vr", true);
+  if (mh) s.push(`Mixing heights rise to about ${fmt("mh", mh.v)} ft around ${t(mh.i)}${tw ? `, with transport winds up to ${compass(b.twd[tw.i])} ${fmt("tw", tw.v)} ${prefs.wu}` : ""}${vr ? `; ventilation peaks near ${fmt("vr", vr.v)} m²/s` : ""}.`);
+  const mh0 = b.mh[w0]; if (mh0 != null && mh0 < 1000) s.push(`The mixed layer is shallow at the start (about ${fmt("mh", mh0)} ft), so smoke will stay low until it deepens.`);
+  const pp = at("pop", true); if (pp && pp.v >= 20) s.push(`Rain chances reach ${fmt("pop", pp.v)}%.`);
+  if (prefs.rx.length){
+    const c = h.col;
+    if (c.run) s.push(`The forecast is in prescription ${runTxt(c.run)}${c.nIn > c.run.n ? ` (${c.nIn} h in all)` : ""}, with up to ${c.peak}% of models agreeing.`);
+    else { const l = c.lim[0]; s.push(`The forecast stays out of prescription${l ? `, limited mainly by ${critPhrase(l.c)}` : ""}.`); }
+  }
+  return s.join(" ");
+}
+
+/* ---------- the product model, shared by the preview and the PDF ---------- */
+function discKey(){ return prefs.view === "outlook" ? `o|${prefs.site}|${OUT && OUT.cols[0] ? OUT.cols[0].day.date : ""}` : `h|${prefs.site}|${HR ? HR.day.date : ""}`; }
+function discAuto(){ return prefs.view === "outlook" ? (OUT ? discOutlook(OUT) : "") : (HR ? discHourly(HR) : ""); }
+function discText(){ const k = discKey(); return prefs.disc && prefs.disc[k] != null ? prefs.disc[k] : discAuto(); }
+function rxSummary(){
+  if (!prefs.rx.length) return "No prescription set.";
+  const crit = "Prescription: " + prefs.rx.filter(c => F[c.f]).map(critText).join("; ") + ".";
+  if (prefs.view === "outlook"){
+    const ok = OUT.cols.filter(c => c.run);
+    return crit + (ok.length ? ` In prescription: ${ok.map(c => `${dshort(c.day.date)} ${runTxt(c.run)}${c.nIn > c.run.n ? ` (${c.nIn} h)` : ""}`).join("; ")}.` : " No hour this week is in prescription.");
+  }
+  return crit + (HR.col.run ? ` Forecast in prescription: ${dshort(HR.day.date)} ${runTxt(HR.col.run)}.` : " The forecast is not in prescription during the burn window.");
+}
+const worst = (...a) => a.includes("bad") ? "bad" : a.includes("warn") ? "warn" : a.includes("go") ? "go" : "";
+function product(){
+  if (!G || !OUT) return null;
+  const pt = G.pt, iss = nowLocal(), issTxt = prefs.tz === "Z" ? (() => { const d = toZ(iss); return `${d.getUTCDate()} ${d.toLocaleDateString("en-US", { timeZone:"UTC", month:"short" })} ${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}Z`; })() : `${+iss.slice(8, 10)} ${new Date(iss.slice(0, 10) + "T12:00:00Z").toLocaleDateString("en-US", { timeZone:"UTC", month:"short" })} ${iss.slice(11, 13)}${iss.slice(14, 16)}L`;
+  const base = { pt, issued: issTxt, forecaster: (prefs.initials || "").toUpperCase(), winds: prefs.wu, disc: discText(), rx: rxSummary() };
+  if (prefs.view === "outlook"){
+    const cols = OUT.cols;
+    const head = ["Day","Burn window","Hrs in Rx","Best period","Agree %","High °F","Min RH %","Max VPD kPa","20 ft wind","Mix ht ft","Transport","Vent m²/s","Rain %"];
+    const wts = [0.9, 1.05, 0.62, 1.05, 0.55, 0.55, 0.6, 0.62, 1.05, 0.7, 0.85, 0.75, 0.5];
+    const rows = cols.map(c => {
+      const dc = (f, s) => dayCls(f, ov(c, f, s), s).c;
+      const lo = ov(c, "s20", "min"), hi = ov(c, "s20", "max"), g = ov(c, "g20", "max");
+      const wind = hi == null ? "" : `${compass(ov(c, "dir", "vec"))} ${fmt("s20", lo)}-${fmt("s20", hi)}${g != null && Math.round(g*wf()) > Math.round(hi*wf()) + 2 ? "G" + fmt("g20", g) : ""}`;
+      const v = c.verdict === "go" ? "go" : c.verdict === "marg" ? "warn" : c.verdict === "no" ? "bad" : "";
+      return { cells: [
+        { t: dmed(c.day.date), b:true }, { t: windowLabel(c.day) },
+        { t: prefs.rx.length ? (c.known ? `${c.nIn} of ${c.idx.length}` : "-") : "", f: v, b:true }, { t: c.run ? runTxt(c.run) : prefs.rx.length ? "none" : "" },
+        { t: c.peak ?? "" }, { t: fmt("t", ov(c, "t", "max")), f: dc("t", "max") }, { t: fmt("rh", ov(c, "rh", "min")), f: dc("rh", "min") },
+        { t: fmt("vpd", ov(c, "vpd", "max")), f: dc("vpd", "max") }, { t: wind, f: worst(dc("s20", "min"), dc("s20", "max"), dc("g20", "max")) },
+        { t: fmt("mh", ov(c, "mh", "max")), f: dc("mh", "max") }, { t: ov(c, "tw", "max") == null ? "" : `${compass(ov(c, "twd", "atmax"))} ${fmt("tw", ov(c, "tw", "max"))}`, f: dc("tw", "max") },
+        { t: fmt("vr", ov(c, "vr", "max")), f: dc("vr", "max") }, { t: fmt("pop", ov(c, "pop", "max")), f: dc("pop", "max") } ] };
+    });
+    const first = cols[0], last = cols[cols.length - 1];
+    return { ...base, title:"Fire Weather Outlook", kind:"outlook",
+      valid: first ? `${dmed(first.day.date)} – ${dmed(last.day.date)}, daily burn windows` : "",
+      head, wts, rows,
+      notes: `Each row covers that day's burn window, sunrise ${prefs.wA >= 0 ? "+" : "-"}${Math.abs(prefs.wA)} h to sunset ${prefs.wB >= 0 ? "-" : "+"}${Math.abs(prefs.wB)} h. Values are extremes inside the window from blended ${OUT.mem.map(m => m.n).join(", ")} guidance: high temperature, lowest RH, highest VPD, 20 ft sustained range with peak (G), highest mixing height, strongest transport wind, best ventilation and highest rain chance. Hrs in Rx: hours the blended forecast meets every criterion. Agree: highest share of models meeting every criterion in one hour. Green meets the limit, amber misses it at some hours, red misses it at every hour. VPD: vapor pressure deficit.` };
+  }
+  const { idx, blend, mem, day, col } = HR;
+  const head = ["Time","Sky","Temp °F","RH %","VPD kPa","20 ft wind","Mix ht ft","Transport","Vent m²/s","Rain %","In Rx","Agree %"];
+  const wts = [0.75, 0.55, 0.65, 0.55, 0.65, 1.15, 0.8, 1.0, 0.85, 0.6, 0.55, 0.65];
+  const win = new Set(col.idx);
+  const rows = idx.map(i => {
+    const r = rxAt(i, mem, blend), cc = f => cellCls(f, blend[f][i]);
+    const ag = r.chance == null ? "" : r.chance >= 70 ? "go" : r.chance >= 30 ? "warn" : "bad";
+    return { dim: !win.has(i), cells: [
+      { t: hhmm(G.times[i]) + tzTag(), b:true }, { t: skyCat(blend.sky[i]) }, { t: fmt("t", blend.t[i]), f: cc("t") }, { t: fmt("rh", blend.rh[i]), f: cc("rh") },
+      { t: fmt("vpd", blend.vpd[i]), f: cc("vpd") }, { t: windTxt(blend.dir[i], blend.s20[i], blend.g20[i]), f: worst(cc("s20"), cc("g20")) },
+      { t: fmt("mh", blend.mh[i]), f: cc("mh") }, { t: blend.tw[i] == null ? "" : `${compass(blend.twd[i])} ${fmt("tw", blend.tw[i])}`, f: cc("tw") },
+      { t: fmt("vr", blend.vr[i]), f: cc("vr") }, { t: fmt("pop", blend.pop[i]), f: cc("pop") },
+      { t: r.blend == null ? (prefs.rx.length ? "-" : "") : r.blend ? "Yes" : "No", f: r.blend == null ? "" : r.blend ? "go" : "bad", b:true }, { t: r.chance ?? "", f: ag } ] };
+  });
+  return { ...base, title:"Fire Weather Forecast", kind:"hourly", dayLabel: dayName(day.date, true),
+    valid: `${dmed(day.date)} ${windowLabel(day)}${prefs.span === "day" ? " (full day shown)" : ""}`,
+    head, wts, rows,
+    notes: `Hourly values from blended ${mem.map(m => m.n).join(", ")} guidance. 20 ft wind: direction, sustained speed and peak (G). Mixing height is above ground; transport wind is the mean wind through the mixed layer; ventilation is mixing height times transport wind. VPD: vapor pressure deficit. In Rx: the blended forecast meets every criterion. Agree: share of models meeting every criterion.${prefs.span === "day" ? " Gray rows are outside the burn window." : ""}` };
+}
+
+/* ---------- on-screen preview ---------- */
+function productHTML(P){
+  if (!P) return '<p class="mut">Waiting for guidance…</p>';
+  const cell = c => `<td class="${c.f ? "p" + c.f : ""}${c.b ? " pb" : ""}">${c.t === "" || c.t == null ? "–" : esc(c.t)}</td>`;
+  return `<div class="fwh"><img src="${ASSET}45ws-logo.png" alt="" onerror="this.style.visibility='hidden'"><div><h2>${esc(P.title)}</h2><p>45th Weather Squadron · prescribed burn support</p></div><img src="${ASSET}ussf-seal.png" alt="" onerror="this.style.visibility='hidden'"></div>
+    <table class="fwi"><tr><th>Burn unit</th><td>${esc(P.pt.name)}</td><th>Issued</th><td>${esc(P.issued)}</td></tr><tr><th>Location</th><td>${P.pt.lat.toFixed(4)}, ${P.pt.lon.toFixed(4)}</td><th>Valid</th><td>${esc(P.valid)}</td></tr><tr><th>Forecaster</th><td>${esc(P.forecaster)}</td><th>Winds</th><td>${esc(P.winds)}</td></tr></table>
+    <div class="fwbox"><b>Discussion</b><p>${esc(P.disc) || "&nbsp;"}</p></div>
+    <div class="fwbox"><b>Prescription</b><p>${esc(P.rx)}</p></div>
+    <table class="fwt"><tr>${P.head.map(h => `<th>${esc(h)}</th>`).join("")}</tr>${P.kind === "hourly" ? `<tr class="fwd"><td colspan="${P.head.length}">${esc(P.dayLabel)}</td></tr>` : ""}${P.rows.map(r => `<tr${r.dim ? ' class="dim"' : ""}>${r.cells.map(cell).join("")}</tr>`).join("")}</table>
+    <p class="fwn">${esc(P.notes)}</p>`;
+}
+function renderProduct(){
+  const P = product();
+  $("prodTitle").textContent = prefs.view === "outlook" ? "Fire weather outlook" : "Fire weather forecast";
+  const ta = $("disc");
+  if (document.activeElement !== ta) ta.value = P ? P.disc : "";
+  ta.style.height = "auto"; ta.style.height = Math.max(120, ta.scrollHeight + 4) + "px";
+  $("discReset").hidden = !(prefs.disc && prefs.disc[discKey()] != null);
+  $("prodPrev").innerHTML = productHTML(P);
+}
+
+/* ---------- PDF: Helvetica text, rectangles and two JPEG logos ---------- */
+const HELV = [278,278,355,556,556,889,667,191,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,278,278,584,584,584,556,1015,667,667,722,722,667,611,778,722,278,500,667,556,833,722,778,667,778,722,667,611,722,667,944,667,667,611,278,278,278,469,556,333,556,556,500,556,556,278,556,556,222,222,500,222,833,556,556,556,556,333,500,278,556,500,722,500,500,500,334,260,334,584];
+const HELVB = [278,333,474,556,556,889,722,238,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,333,333,584,584,584,611,975,722,722,722,722,667,611,778,722,278,556,722,611,833,722,778,667,778,722,667,611,722,667,944,667,667,611,333,278,333,584,556,333,556,611,556,611,556,333,611,611,278,278,556,278,889,611,611,611,611,389,556,333,611,556,778,556,556,500,389,280,389,584];
+const WIN = { "°":[0xB0,400], "·":[0xB7,278], "–":[0x96,556], "—":[0x97,1000], "²":[0xB2,333], "…":[0x85,1000], "‘":[0x91,222], "’":[0x92,222], "“":[0x93,333], "”":[0x94,333] };
+const pdfNorm = s => String(s ?? "").replace(/≥/g, ">=").replace(/≤/g, "<=").replace(/×/g, "x").replace(/²/g, "2").replace(/\s+/g, " ");
+function textW(s, size, bold){ const t = bold ? HELVB : HELV; let w = 0; for (const ch of pdfNorm(s)){ const c = ch.charCodeAt(0); w += c >= 32 && c <= 126 ? t[c - 32] : WIN[ch] ? WIN[ch][1] : 556; } return w*size/1000; }
+function pdfStr(s){ let o = "("; for (const ch of pdfNorm(s)){ let c = ch.charCodeAt(0); if (WIN[ch]) c = WIN[ch][0]; else if (c < 32 || c > 126) c = 63; if (c === 40 || c === 41 || c === 92) o += "\\" + String.fromCharCode(c); else if (c > 126) o += "\\" + c.toString(8).padStart(3, "0"); else o += String.fromCharCode(c); } return o + ")"; }
+const IMG = {};
+async function loadLogo(name){
+  if (name in IMG) return IMG[name];
+  try {
+    const r = await fetch(ASSET + name); if (!r.ok) throw 0;
+    const bmp = await createImageBitmap(await r.blob());
+    const h = 200, w = Math.round(bmp.width*h/bmp.height), cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+    const x = cv.getContext("2d"); x.fillStyle = `rgb(${NAVY.join(",")})`; x.fillRect(0, 0, w, h); x.drawImage(bmp, 0, 0, w, h);
+    const bin = atob(cv.toDataURL("image/jpeg", 0.92).split(",")[1]);
+    return (IMG[name] = { w, h, bytes: Uint8Array.from(bin, c => c.charCodeAt(0)) });
+  } catch (e) { return (IMG[name] = null); }
+}
+function pdfFile(pages, imgs, W, Hp){
+  const enc = new TextEncoder(), parts = [], off = []; let len = 0;
+  const push = x => { const b = typeof x === "string" ? enc.encode(x) : x; parts.push(b); len += b.length; };
+  push(new Uint8Array([37,80,68,70,45,49,46,52,10,37,226,227,207,211,10]));   /* %PDF-1.4 + binary marker */
+  let n = 0; const obj = (...body) => { const id = ++n; off[id] = len; push(`${id} 0 obj\n`); body.forEach(push); push("\nendobj\n"); return id; };
+  const nPages = pages.length, catId = 1, pagesId = 2; n = 2;
+  const fR = obj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
+  const fB = obj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
+  const im = imgs.map((g, k) => g ? `/Im${k + 1} ${obj(`<< /Type /XObject /Subtype /Image /Width ${g.w} /Height ${g.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${g.bytes.length} >>\nstream\n`, g.bytes, "\nendstream")} 0 R` : "").filter(Boolean).join(" ");
+  const kids = pages.map(c => { const s = obj(`<< /Length ${enc.encode(c).length} >>\nstream\n${c}\nendstream`); return obj(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${W} ${Hp}] /Resources << /Font << /F1 ${fR} 0 R /F2 ${fB} 0 R >>${im ? ` /XObject << ${im} >>` : ""} >> /Contents ${s} 0 R >>`); });
+  off[catId] = len; push(`${catId} 0 obj\n<< /Type /Catalog /Pages ${pagesId} 0 R >>\nendobj\n`);
+  off[pagesId] = len; push(`${pagesId} 0 obj\n<< /Type /Pages /Kids [${kids.map(k => k + " 0 R").join(" ")}] /Count ${nPages} >>\nendobj\n`);
+  const xref = len; let x = `xref\n0 ${n + 1}\n0000000000 65535 f \n`; for (let i = 1; i <= n; i++) x += String(off[i]).padStart(10, "0") + " 00000 n \n";
+  push(x + `trailer\n<< /Size ${n + 1} /Root ${catId} 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+  return new Blob(parts, { type:"application/pdf" });
+}
+async function productPDF(P){
+  const logo = await loadLogo("45ws-logo.png"), seal = await loadLogo("ussf-seal.png");
+  const W = 612, Hp = 792, X0 = 30, X1 = 582, pages = []; let cs = [];
+  const f = v => (+v).toFixed(2), rgb = c => c.map(v => f(v/255)).join(" ");
+  const rect = (x, y, w, h, c) => cs.push(`${rgb(c)} rg ${f(x)} ${f(Hp - y - h)} ${f(w)} ${f(h)} re f`);
+  const box = (x, y, w, h, lw) => cs.push(`0 0 0 RG ${f(lw || .6)} w ${f(x)} ${f(Hp - y - h)} ${f(w)} ${f(h)} re S`);
+  const fit = (t, mw, z, b) => { while (z > 4.5 && textW(t, z, b) > mw) z -= .25; return z; };
+  const text = (t, x, y, size, o = {}) => { t = pdfNorm(t); const z = o.max ? fit(t, o.max, size, o.bold) : size, w = textW(t, z, o.bold), tx = o.align === "c" ? x - w/2 : o.align === "r" ? x - w : x; cs.push(`BT ${rgb(o.color || [0,0,0])} rg /${o.bold ? "F2" : "F1"} ${f(z)} Tf ${f(tx)} ${f(Hp - y)} Td ${pdfStr(t)} Tj ET`); };
+  const wrap = (t, size, mw) => { const out = []; let ln = ""; for (const w of pdfNorm(t).split(" ").filter(Boolean)){ const t2 = ln ? ln + " " + w : w; if (textW(t2, size) > mw && ln){ out.push(ln); ln = w; } else ln = t2; } if (ln) out.push(ln); return out; };
+  const GREY = [226,230,233];
+  /* header band with the squadron logo and the USSF seal */
+  rect(X0, 24, X1 - X0, 56, NAVY);
+  const imgs = [logo, seal]; let k = 0;
+  if (logo){ k++; const lh = 48, lw = lh*logo.w/logo.h; cs.push(`q ${f(lw)} 0 0 ${f(lh)} ${f(X0 + 6)} ${f(Hp - 28 - lh)} cm /Im${k} Do Q`); }
+  if (seal){ k++; const lh = 48, lw = lh*seal.w/seal.h; cs.push(`q ${f(lw)} 0 0 ${f(lh)} ${f(X1 - 6 - lw)} ${f(Hp - 28 - lh)} cm /Im${k} Do Q`); }
+  text(P.title.toUpperCase(), (X0 + X1)/2, 50, 17, { bold:true, color:[255,255,255], align:"c" });
+  text("45th Weather Squadron  ·  Prescribed Burn Support", (X0 + X1)/2, 68, 9, { color:[220,228,238], align:"c" });
+  let y = 88;
+  const info = [["Burn unit", P.pt.name, "Issued", P.issued], ["Location", `${P.pt.lat.toFixed(4)}, ${P.pt.lon.toFixed(4)}`, "Valid", P.valid], ["Forecaster", P.forecaster, "Winds", P.winds]];
+  const cw = [0.14, 0.36, 0.12, 0.38].map(v => v*(X1 - X0));
+  for (const row of info){ let x = X0; row.forEach((v, j) => { if (j % 2 === 0) rect(x, y, cw[j], 15, GREY); box(x, y, cw[j], 15, .5); text(v, x + 4, y + 10.5, 8, { bold: j % 2 === 0, max: cw[j] - 8 }); x += cw[j]; }); y += 15; }
+  y += 8;
+  const para = (title, body, maxL) => { const lines = wrap(body, 8.5, X1 - X0 - 14).slice(0, maxL); const h = 16 + Math.max(1, lines.length)*11 + 4; box(X0, y, X1 - X0, h, .6); text(title, X0 + 6, y + 12, 9, { bold:true }); lines.forEach((l, j) => text(l, X0 + 6, y + 25 + j*11, 8.5)); y += h + 6; };
+  para("Discussion", P.disc, 16);
+  para("Prescription", P.rx, 6);
+  /* the table */
+  const tot = P.wts.reduce((a, b) => a + b, 0), cws = P.wts.map(v => (X1 - X0)*v/tot), RH = P.kind === "outlook" ? 16 : 13;
+  /* headers wrap onto two lines rather than shrinking */
+  const split = (h, mw) => { if (textW(h, 6.8, true) <= mw || !h.includes(" ")) return [h]; const w = h.split(" "); let best = null; for (let i = 1; i < w.length; i++){ const a = w.slice(0, i).join(" "), b = w.slice(i).join(" "), m = Math.max(textW(a, 6.8, true), textW(b, 6.8, true)); if (!best || m < best.m) best = { a, b, m }; } return [best.a, best.b]; };
+  const head = () => { let x = X0; P.head.forEach((h, j) => { rect(x, y, cws[j], 20, GREY); box(x, y, cws[j], 20, .4); const ls = split(h, cws[j] - 3); ls.forEach((l, k) => text(l, x + cws[j]/2, y + (ls.length > 1 ? 8.5 + k*7.8 : 12.5), 6.8, { bold:true, align:"c", max: cws[j] - 3 })); x += cws[j]; }); y += 20; };
+  head();
+  if (P.kind === "hourly"){ rect(X0, y, X1 - X0, 12, [244,246,247]); box(X0, y, X1 - X0, 12, .4); text(P.dayLabel, X0 + 4, y + 9, 7.2, { bold:true }); y += 12; }
+  for (const r of P.rows){
+    if (y + RH > Hp - 60){ pages.push(cs.join("\n")); cs = []; y = 40; head(); }
+    let x = X0;
+    r.cells.forEach((c, j) => {
+      const fill = c.f && FILL[c.f]; if (fill) rect(x, y, cws[j], RH, fill); else if (r.dim) rect(x, y, cws[j], RH, [244,246,247]);
+      box(x, y, cws[j], RH, .3);
+      text(c.t === "" || c.t == null ? "-" : c.t, x + cws[j]/2, y + RH/2 + 2.8, P.kind === "outlook" ? 7.8 : 7.6, { align:"c", max: cws[j] - 3, bold: c.b, color: r.dim ? [110,118,126] : [0,0,0] });
+      x += cws[j];
+    });
+    y += RH;
+  }
+  const notes = wrap(P.notes + " Guidance from Open-Meteo; review before release.", 6.8, X1 - X0);
+  if (y + 10 + notes.length*8.5 > Hp - 20){ pages.push(cs.join("\n")); cs = []; y = 40; }
+  notes.forEach((l, j) => text(l, X0, y + 12 + j*8.5, 6.8, { color:[80,90,100] }));
+  pages.push(cs.join("\n"));
+  return pdfFile(pages, imgs.filter(Boolean), W, Hp);
+}
+async function downloadPDF(){
+  const P = product(); if (!P){ toast("Guidance hasn't loaded yet"); return; }
+  const btns = [$("pdfBtn"), $("pdfBtn2")]; btns.forEach(b => b.disabled = true);
+  try {
+    const blob = await productPDF(P), a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${(P.pt.name || "Burn").replace(/[^A-Za-z0-9]+/g, "_")}_${P.kind === "outlook" ? "Fire_Weather_Outlook_" + nowLocal().slice(0, 10) : "Fire_Weather_Forecast_" + HR.day.date}.pdf`;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  } catch (e) { toast("PDF failed: " + e.message); }
+  btns.forEach(b => b.disabled = false);
+}
+
+/* ============================================================
    Controls
    ============================================================ */
 function renderSites(){
@@ -698,6 +994,7 @@ function render(){
   $("issued").textContent = `Guidance fetched ${issued.toLocaleString("en-US", { timeZone:TZ, month:"short", day:"numeric", hour:"2-digit", minute:"2-digit", hourCycle:"h23" })} ET`;
   $("printhead").innerHTML = `<b>45th Weather Squadron burn ${prefs.view === "outlook" ? "outlook" : "forecast"}</b> · ${esc(G.pt.name)} · issued ${esc(nowLocal().replace("T", " "))} ET${prefs.rx.length ? `<br>Prescription: ${esc(prefs.rx.map(critText).join("; "))}` : ""}`;
   if (prefs.view === "outlook") renderOutlook(); else renderHourly();
+  renderProduct();
 }
 
 function init(){
@@ -719,7 +1016,18 @@ function init(){
   $("tzSel").onclick = e => { const b = e.target.closest("[data-tz]"); if (!b) return; prefs.tz = b.dataset.tz; save(); render(); };
   $("refresh").onclick = fetchGuidance;
   $("csvBtn").onclick = downloadCSV;
-  $("printBtn").onclick = () => window.print();
+  $("pdfBtn").onclick = downloadPDF; $("pdfBtn2").onclick = downloadPDF;
+  $("initials").value = prefs.initials || "";
+  $("initials").oninput = () => { prefs.initials = $("initials").value.trim(); save(); if (G) $("prodPrev").innerHTML = productHTML(product()); };
+  $("disc").oninput = () => {
+    if (!G) return;
+    prefs.disc = prefs.disc || {}; prefs.disc[discKey()] = $("disc").value;
+    /* keep the latest few edited discussions */
+    const ks = Object.keys(prefs.disc); if (ks.length > 30) ks.slice(0, ks.length - 30).forEach(k => delete prefs.disc[k]);
+    save(); $("discReset").hidden = false; $("prodPrev").innerHTML = productHTML(product());
+    const ta = $("disc"); ta.style.height = "auto"; ta.style.height = Math.max(120, ta.scrollHeight + 4) + "px";
+  };
+  $("discReset").onclick = () => { if (prefs.disc) delete prefs.disc[discKey()]; save(); $("disc").blur(); renderProduct(); };
   /* theme toggle, shared with the other pages */
   const cur = () => document.documentElement.getAttribute("data-theme") || "auto";
   const mark = () => document.querySelectorAll(".theme [data-th]").forEach(b => b.setAttribute("aria-pressed", b.getAttribute("data-th") === cur()));
