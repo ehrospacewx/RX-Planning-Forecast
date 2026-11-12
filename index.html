@@ -209,7 +209,7 @@ input[type=number]{width:84px}
       <div class="field"><label>Lat <input type="number" id="cLat" step="0.0001"></label><label>Lon <input type="number" id="cLon" step="0.0001"></label><button class="btn" id="cGo">Use this point</button></div>
       <div class="field"><label>Window starts <input type="number" id="wA" step="0.5" style="width:64px"> h after sunrise</label></div>
       <div class="field"><label>Window ends <input type="number" id="wB" step="0.5" style="width:64px"> h before sunset</label></div>
-      <div class="field"><label>KBDI today <input type="number" id="kbdiIn" step="1" min="0" max="800" placeholder="FFS" style="width:72px"></label><label>Mean annual rain <input type="number" id="annRain" step="1" min="10" max="90" style="width:60px"> in</label></div>
+      <div class="field"><label>KBDI today <input type="number" id="kbdiIn" step="1" min="0" max="800" placeholder="FFS" style="width:84px"></label><label>Mean annual rain <input type="number" id="annRain" step="1" min="10" max="90" style="width:60px"> in</label></div>
       <p class="mut small" id="kbdiNote" style="margin:2px 0 6px"></p>
       <p class="mut small" style="margin:6px 0 0">Leave KBDI blank to use the Florida Forest Service value. Use negative numbers to start before sunrise or end after sunset. The outlook takes each day's extremes inside this window.</p>
     </div>
@@ -584,13 +584,34 @@ let OUT = null;  /* last outlook, for CSV */
    Keetch-Byram Drought Index: today's FFS value, stepped forward with the forecast
    ============================================================ */
 let KBDI = { state:"loading" };
-async function loadKBDI(){
-  /* data/kbdi.json is written daily by the "Update KBDI" GitHub Action from the FFS county report */
+const FFS_URL = "https://weather.fdacs.gov/KBDI/report/kbdi_current.html";
+const KBDI_COUNTY = "Brevard";
+/* the FFS county table, as markdown, through the r.jina.ai reader (FDACS doesn't let other sites read it directly) */
+async function kbdiFromRelay(){
+  try { const c = JSON.parse(localStorage.getItem("burnoutlook:kbdi") || "null"); if (c && Date.now() - c.at < 3600e3) return c.d; } catch (e) {}
+  const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), 15000);
   try {
-    const r = await fetch(ASSET + "data/kbdi.json?t=" + Date.now(), { cache:"no-store" }); if (!r.ok) throw new Error(r.status);
-    const j = await r.json(); if (!isFinite(+j.kbdi)) throw new Error("no value");
-    KBDI = { state:"ok", value:+j.kbdi, date:j.date, county:j.county || "Brevard", min:j.min, max:j.max, change:j.change };
-  } catch (e) { KBDI = { state:"none" }; }
+    const t = await fetch("https://r.jina.ai/" + FFS_URL, { signal: ctl.signal }).then(r => { if (!r.ok) throw new Error(r.status); return r.text(); });
+    const dm = t.match(/KBDI Summary for ([A-Za-z]+) (\d{1,2}), (\d{4})/), row = t.match(new RegExp(`\\|\\s*${KBDI_COUNTY}\\s*\\|\\s*(\\d+)\\s*\\|\\s*(-?\\d+)\\s*\\|\\s*(\\d+)\\s*/\\s*(\\d+)\\s*\\|`));
+    if (!dm || !row) throw new Error("not found");
+    const mon = MONTHS.indexOf(dm[1].slice(0, 3).toLowerCase());
+    const d = { kbdi:+row[1], change:+row[2], min:+row[3], max:+row[4], date:`${dm[3]}-${pad(mon + 1)}-${pad(+dm[2])}`, county:KBDI_COUNTY };
+    try { localStorage.setItem("burnoutlook:kbdi", JSON.stringify({ at:Date.now(), d })); } catch (e) {}
+    return d;
+  } finally { clearTimeout(tm); }
+}
+async function loadKBDI(){
+  /* 1) data/kbdi.json from the site's "Update KBDI" GitHub Action, if it's there and current;
+     2) otherwise the FFS report read through the relay */
+  let best = null;
+  try {
+    const r = await fetch(ASSET + "data/kbdi.json?t=" + Date.now(), { cache:"no-store" });
+    if (r.ok){ const j = await r.json(); if (isFinite(+j.kbdi)) best = j; }
+  } catch (e) {}
+  if (!best || best.date < addDays(nowLocal().slice(0, 10), -1)){
+    try { const j = await kbdiFromRelay(); if (j && (!best || j.date > best.date)) best = j; } catch (e) {}
+  }
+  KBDI = best ? { state:"ok", value:+best.kbdi, date:best.date, county:best.county || KBDI_COUNTY, min:best.min, max:best.max, change:best.change } : { state:"none" };
   renderKBDINote(); render();
 }
 function kbdiStart(){
@@ -630,11 +651,12 @@ function kbdiFor(dates, mem){
 }
 function kbdiSrcText(){
   const st = kbdiStart(); if (!st) return "";
-  return st.src === "manual" ? "Today's value entered by the forecaster; later days forecast from guidance" : `FFS ${KBDI.county} County mean for ${dmed(KBDI.date)}; later days forecast from guidance`;
+  return st.src === "manual" ? "Entered by forecaster; later days forecast" : `FFS ${KBDI.county} County, ${dmed(KBDI.date)}; later days forecast`;
 }
 function renderKBDINote(){
   const el = $("kbdiNote"); if (!el) return;
-  el.textContent = KBDI.state === "ok" ? `Latest FFS value: ${KBDI.county} County ${KBDI.value} (range ${KBDI.min}–${KBDI.max}) for ${dmed(KBDI.date)}.` : KBDI.state === "loading" ? "Looking for the FFS value…" : "No FFS value found (data/kbdi.json). Enter today's KBDI to forecast it.";
+  const inp = $("kbdiIn"); if (inp) inp.placeholder = KBDI.state === "ok" ? `FFS ${KBDI.value}` : "FFS";
+  el.textContent = KBDI.state === "ok" ? `Latest FFS value: ${KBDI.county} County ${KBDI.value} (range ${KBDI.min}–${KBDI.max}) for ${dmed(KBDI.date)}.` : KBDI.state === "loading" ? "Looking for the FFS value…" : "Couldn't reach the FFS KBDI report. Enter today's KBDI to forecast it.";
 }
 
 function buildOutlook(){
@@ -876,8 +898,8 @@ function product(){
   const base = { pt, issued: issTxt, kbdi: kbTxt, kbdiSrc: kbTxt ? kbdiSrcText() : "", forecaster: (prefs.initials || "").toUpperCase(), winds: prefs.wu, disc: discText(), rx: rxSummary() };
   if (prefs.view === "outlook"){
     const cols = OUT.cols;
-    const head = ["Day","Burn window","Hrs in Rx","Best period","High °F","Min RH %","Max VPD kPa","20 ft wind","Mix ht ft","Transport","Vent m²/s","Rain %"];
-    const wts = [0.9, 1.05, 0.62, 1.05, 0.55, 0.6, 0.62, 1.05, 0.7, 0.85, 0.75, 0.5];
+    const head = ["Day","Burn window","Hrs in Rx","Best period","High °F","Min RH %","Max VPD kPa","20 ft wind","Mix ht ft","Transport","Vent m²/s","Rain %","KBDI"];
+    const wts = [0.88, 0.98, 0.58, 0.98, 0.5, 0.56, 0.6, 1.02, 0.66, 0.8, 0.72, 0.48, 0.52];
     const rows = cols.map(c => {
       const dc = (f, s) => dayCls(f, ov(c, f, s), s).c;
       const lo = ov(c, "s20", "min"), hi = ov(c, "s20", "max"), g = ov(c, "g20", "max");
@@ -889,13 +911,14 @@ function product(){
         { t: fmt("t", ov(c, "t", "max")), f: dc("t", "max") }, { t: fmt("rh", ov(c, "rh", "min")), f: dc("rh", "min") },
         { t: fmt("vpd", ov(c, "vpd", "max")), f: dc("vpd", "max") }, { t: wind, f: worst(dc("s20", "min"), dc("s20", "max"), dc("g20", "max")) },
         { t: fmt("mh", ov(c, "mh", "max")), f: dc("mh", "max") }, { t: ov(c, "tw", "max") == null ? "" : `${compass(ov(c, "twd", "atmax"))} ${fmt("tw", ov(c, "tw", "max"))}`, f: dc("tw", "max") },
-        { t: fmt("vr", ov(c, "vr", "max")), f: dc("vr", "max") }, { t: fmt("pop", ov(c, "pop", "max")), f: dc("pop", "max") } ] };
+        { t: fmt("vr", ov(c, "vr", "max")), f: dc("vr", "max") }, { t: fmt("pop", ov(c, "pop", "max")), f: dc("pop", "max") },
+        { t: c.kb && c.kb.v != null ? Math.round(c.kb.v) : "", b: !!(c.kb && c.kb.obs) } ] };
     });
     const first = cols[0], last = cols[cols.length - 1];
     return { ...base, title:"Fire Weather Outlook", kind:"outlook",
       valid: first ? `${dmed(first.day.date)} – ${dmed(last.day.date)}, daily burn windows` : "",
       head, wts, rows,
-      notes: `Each row covers that day's burn window, sunrise ${prefs.wA >= 0 ? "+" : "-"}${Math.abs(prefs.wA)} h to sunset ${prefs.wB >= 0 ? "-" : "+"}${Math.abs(prefs.wB)} h. Values are extremes inside the window from blended ${OUT.mem.map(m => m.n).join(", ")} guidance: high temperature, lowest RH, highest VPD, 20 ft sustained range with peak (G), highest mixing height, strongest transport wind, best ventilation and highest rain chance. Hrs in Rx: hours the blended forecast meets every criterion. Green meets the limit, amber misses it at some hours, red misses it at every hour. VPD: vapor pressure deficit.` };
+      notes: `Each row covers that day's burn window, sunrise ${prefs.wA >= 0 ? "+" : "-"}${Math.abs(prefs.wA)} h to sunset ${prefs.wB >= 0 ? "-" : "+"}${Math.abs(prefs.wB)} h. Values are extremes inside the window from blended ${OUT.mem.map(m => m.n).join(", ")} guidance: high temperature, lowest RH, highest VPD, 20 ft sustained range with peak (G), highest mixing height, strongest transport wind, best ventilation and highest rain chance. KBDI: today's Florida Forest Service Brevard County value (bold), later days forecast with the Keetch-Byram equation from forecast highs and rain. Hrs in Rx: hours the blended forecast meets every criterion. Green meets the limit, amber misses it at some hours, red misses it at every hour. VPD: vapor pressure deficit.` };
   }
   const { idx, blend, mem, day, col } = HR;
   const head = ["Time","Sky","Temp °F","RH %","VPD kPa","20 ft wind","Mix ht ft","Transport","Vent m²/s","Rain %","In Rx"];
