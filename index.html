@@ -209,7 +209,9 @@ input[type=number]{width:84px}
       <div class="field"><label>Lat <input type="number" id="cLat" step="0.0001"></label><label>Lon <input type="number" id="cLon" step="0.0001"></label><button class="btn" id="cGo">Use this point</button></div>
       <div class="field"><label>Window starts <input type="number" id="wA" step="0.5" style="width:64px"> h after sunrise</label></div>
       <div class="field"><label>Window ends <input type="number" id="wB" step="0.5" style="width:64px"> h before sunset</label></div>
-      <p class="mut small" style="margin:6px 0 0">Use negative numbers to start before sunrise or end after sunset. The outlook takes each day's extremes inside this window.</p>
+      <div class="field"><label>KBDI today <input type="number" id="kbdiIn" step="1" min="0" max="800" placeholder="FFS" style="width:72px"></label><label>Mean annual rain <input type="number" id="annRain" step="1" min="10" max="90" style="width:60px"> in</label></div>
+      <p class="mut small" id="kbdiNote" style="margin:2px 0 6px"></p>
+      <p class="mut small" style="margin:6px 0 0">Leave KBDI blank to use the Florida Forest Service value. Use negative numbers to start before sunrise or end after sunset. The outlook takes each day's extremes inside this window.</p>
     </div>
     <div class="panel">
       <h3>Prescription</h3>
@@ -231,6 +233,7 @@ input[type=number]{width:84px}
     <p><b>VPD</b> (vapor pressure deficit, kPa) is saturation vapor pressure at the 2 m temperature minus actual vapor pressure from the 2 m dew point, as each model reports it. Higher VPD means drier fuels and air that pulls moisture faster.</p>
     <p><b>20 ft winds</b> come from the 10 m wind using a log profile (roughness 0.05 m). Peak winds scale the 10 m gust factor to 20 ft the same way.</p>
     <p><b>Mixing height</b> (ft above ground) is where a surface parcel, 0.5 K warmer than the 2 m temperature, meets the environmental potential temperature profile from the pressure-level data. <b>Transport wind</b> is the mean speed through the mixed layer, from 10 m up to the mixing height, with direction from the mean vector. <b>Ventilation</b> is mixing height times transport wind (m²/s).</p>
+    <p><b>KBDI</b> (Keetch-Byram Drought Index, 0–800) starts from the Florida Forest Service's latest county mean for Brevard, saved daily to data/kbdi.json by the site's "Update KBDI" GitHub Action, or from a value you enter. Each later day applies the Keetch-Byram (1968) equation to the blended forecast: drying from the day's high temperature (mean annual rain 50 in by default), and 100 points off per inch of rain after the first 0.20 in of each rain spell. The small numbers are the range from running each model alone.</p>
     <p><b>Outlook</b> columns cover each day's burn window, from sunrise and sunset at the point plus the offsets you set. Day 1 is today until the window closes, then tomorrow.</p>
   </section>
 </main>
@@ -260,7 +263,7 @@ const MODELS = [
   { id:"ncep_nbm_conus",  n:"NBM" },
 ];
 const LEVELS = [1000, 975, 950, 925, 900, 850, 800, 700];
-const SFC_VARS = ["temperature_2m","dew_point_2m","relative_humidity_2m","vapour_pressure_deficit","wind_speed_10m","wind_gusts_10m","wind_direction_10m","precipitation_probability","cloud_cover","surface_pressure"];
+const SFC_VARS = ["precipitation","temperature_2m","dew_point_2m","relative_humidity_2m","vapour_pressure_deficit","wind_speed_10m","wind_gusts_10m","wind_direction_10m","precipitation_probability","cloud_cover","surface_pressure"];
 const LVL_VARS = LEVELS.flatMap(p => ["temperature","wind_speed","wind_direction","geopotential_height"].map(v => `${v}_${p}hPa`));
 const KT2MPH = 1.150779, KT2MS = 0.514444, M2FT = 3.28084;
 const Z0 = 0.05, Z20 = 6.096;
@@ -280,6 +283,7 @@ const F = {
   twd:  { l:"Transport wind direction", dir:true },
   vr:   { l:"Ventilation rate", u:"m²/s", dec:-2, rx:true, step:500 },
   pop:  { l:"Chance of rain", u:"%", dec:0, rx:true },
+  pr:   { l:"Rainfall", u:"in", dec:2 },
 };
 F.t.rx = true;
 const UPPER = new Set(["mh","tw","twd","vr"]);   /* need pressure-level data */
@@ -295,7 +299,7 @@ const load = () => { try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}
 const prefs = Object.assign({
   view:"outlook", span:"window", wu:"mph", tz:"L", site:"custom",
   custom:{ name:"Burn unit", lat:28.66, lon:-80.70 }, wA:1, wB:1,
-  rx: RX_EXAMPLE.map(c => ({ ...c })), models: MODELS.map(m => m.id), day:0, initials:"", disc:{},
+  rx: RX_EXAMPLE.map(c => ({ ...c })), models: MODELS.map(m => m.id), day:0, initials:"", disc:{}, kbdiManual:"", annRain:50,
 }, load());
 const save = () => { try { localStorage.setItem(LS_KEY, JSON.stringify(prefs)); } catch (e) {} };
 
@@ -372,7 +376,7 @@ async function fetchGuidance(){
     latitude: pt.lat.toFixed(4), longitude: pt.lon.toFixed(4),
     hourly: [...SFC_VARS, ...LVL_VARS].join(","), daily:"sunrise,sunset",
     models: MODELS.map(m => m.id).join(","), forecast_days:"9", timezone:TZ,
-    wind_speed_unit:"kn", temperature_unit:"fahrenheit",
+    wind_speed_unit:"kn", temperature_unit:"fahrenheit", precipitation_unit:"inch",
   });
   let js;
   try {
@@ -391,12 +395,12 @@ async function fetchGuidance(){
     const x = {}; for (const k of Object.keys(F)) x[k] = new Array(n).fill(null);
     const T = g("temperature_2m"), Td = g("dew_point_2m"), RH = g("relative_humidity_2m"), VPD = g("vapour_pressure_deficit");
     const S = g("wind_speed_10m"), Gu = g("wind_gusts_10m"), Dr = g("wind_direction_10m"), PS = g("surface_pressure");
-    const PoP = g("precipitation_probability"), CC = g("cloud_cover");
+    const PoP = g("precipitation_probability"), CC = g("cloud_cover"), PR = g("precipitation");
     const lvA = LEVELS.map(p => ({ p, t:g(`temperature_${p}hPa`), s:g(`wind_speed_${p}hPa`), d:g(`wind_direction_${p}hPa`), z:g(`geopotential_height_${p}hPa`) }));
     let hasSfc = false;
     for (let i = 0; i < n; i++){
       if (T[i] == null) continue; hasSfc = true;
-      x.t[i] = T[i]; x.td[i] = Td[i]; x.sky[i] = CC[i]; x.pop[i] = PoP[i];
+      x.t[i] = T[i]; x.td[i] = Td[i]; x.sky[i] = CC[i]; x.pop[i] = PoP[i]; x.pr[i] = PR[i];
       x.rh[i] = RH[i] ?? (Td[i] != null ? Math.min(100, 100*esat(f2c(Td[i]))/esat(f2c(T[i]))) : null);
       x.vpd[i] = VPD[i] ?? (Td[i] != null ? Math.max(0, esat(f2c(T[i])) - esat(f2c(Td[i]))) : null);
       if (S[i] != null){
@@ -535,6 +539,9 @@ const OUT_ROWS = [
   { f:"vpd", s:"max", l:"Highest VPD" },
   { f:"sky", s:"mean", l:"Sky cover, average" },
   { f:"pop", s:"max", l:"Chance of rain, highest" },
+  { g:"Drought" },
+  { k:"kbdi", l:"KBDI (Keetch-Byram)" },
+  { k:"rain", l:"Rain, daily total", u:"in" },
   { g:"20 ft winds" },
   { f:"s20", s:"min", l:"Lightest sustained" },
   { f:"s20", s:"max", l:"Strongest sustained" },
@@ -573,8 +580,65 @@ function endLabel(t){ /* end of an hour that starts at t */
   const d = new Date(Date.UTC(+t.slice(0,4), +t.slice(5,7) - 1, +t.slice(8,10), +t.slice(11,13) + 1)); const s = d.toISOString().slice(0, 16); return hhmm(s);
 }
 let OUT = null;  /* last outlook, for CSV */
+/* ============================================================
+   Keetch-Byram Drought Index: today's FFS value, stepped forward with the forecast
+   ============================================================ */
+let KBDI = { state:"loading" };
+async function loadKBDI(){
+  /* data/kbdi.json is written daily by the "Update KBDI" GitHub Action from the FFS county report */
+  try {
+    const r = await fetch(ASSET + "data/kbdi.json?t=" + Date.now(), { cache:"no-store" }); if (!r.ok) throw new Error(r.status);
+    const j = await r.json(); if (!isFinite(+j.kbdi)) throw new Error("no value");
+    KBDI = { state:"ok", value:+j.kbdi, date:j.date, county:j.county || "Brevard", min:j.min, max:j.max, change:j.change };
+  } catch (e) { KBDI = { state:"none" }; }
+  renderKBDINote(); render();
+}
+function kbdiStart(){
+  const m = parseFloat(prefs.kbdiManual);
+  if (isFinite(m)) return { value: Math.max(0, Math.min(800, m)), src:"manual" };
+  return KBDI.state === "ok" ? { value:KBDI.value, src:"FFS" } : null;
+}
+const kbdiCat = q => q < 200 ? "low" : q < 400 ? "moderate" : q < 600 ? "high" : "extreme";
+/* one day of the Keetch-Byram (1968) equation: rain first (the first 0.20 in of each rain spell
+   is absorbed, then 100 points per inch), then drying from the day's high temperature */
+function kbdiStep(q, tmax, rain, st){
+  if (rain != null && rain >= 0.01){ st.cum += rain; const net = Math.max(0, st.cum - 0.20) - st.used; if (net > 0){ q -= 100*net; st.used += net; } }
+  else { st.cum = 0; st.used = 0; }
+  q = Math.max(0, q);
+  if (tmax != null){ const R = +prefs.annRain > 0 ? +prefs.annRain : 50; const dq = (800 - q)*(0.968*Math.exp(0.0486*tmax) - 8.30)/(1 + 10.88*Math.exp(-0.0441*R))*0.001; if (dq > 0) q += dq; }
+  return Math.min(800, q);
+}
+/* the day's high and rain total (midnight to midnight local) from one series */
+function dayWx(x, date){
+  let t = null, r = 0, n = 0;
+  G.times.forEach((s, i) => { if (s.slice(0, 10) !== date) return; if (x.t[i] != null) t = t == null ? x.t[i] : Math.max(t, x.t[i]); if (x.pr[i] != null){ r += x.pr[i]; n++; } });
+  return { t, r: n ? r : null };
+}
+const meanOf = a => { const v = a.filter(x => x != null); return v.length ? v.reduce((p, q) => p + q, 0)/v.length : null; };
+function rainStat(date, mem){ const per = mem.map(m => dayWx(m.x, date).r).filter(v => v != null); return per.length ? { v: meanOf(per), lo: Math.min(...per), hi: Math.max(...per) } : null; }
+/* KBDI for each outlook date: today is the FFS (or entered) value; later days step forward one day at a time */
+function kbdiFor(dates, mem){
+  const st = kbdiStart(); if (!st || !dates.length) return null;
+  const today = nowLocal().slice(0, 10), last = dates[dates.length - 1], steps = [];
+  for (let d = addDays(today, 1); d <= last; d = addDays(d, 1)) steps.push(d);
+  const run = wx => { const out = { [today]: st.value }; let q = st.value; const s = { cum:0, used:0 }; for (const d of steps){ const w = wx(d); q = kbdiStep(q, w.t, w.r, s); out[d] = q; } return out; };
+  const per = mem.map(m => run(d => dayWx(m.x, d)));
+  const bl = run(d => { const ws = mem.map(m => dayWx(m.x, d)); return { t: meanOf(ws.map(w => w.t)), r: meanOf(ws.map(w => w.r)) }; });
+  const res = {};
+  for (const d of dates){ const vs = per.map(p => p[d]).filter(v => v != null); res[d] = { v: bl[d], lo: vs.length ? Math.min(...vs) : null, hi: vs.length ? Math.max(...vs) : null, obs: d === today, src: st.src }; }
+  return res;
+}
+function kbdiSrcText(){
+  const st = kbdiStart(); if (!st) return "";
+  return st.src === "manual" ? "Today's value entered by the forecaster; later days forecast from guidance" : `FFS ${KBDI.county} County mean for ${dmed(KBDI.date)}; later days forecast from guidance`;
+}
+function renderKBDINote(){
+  const el = $("kbdiNote"); if (!el) return;
+  el.textContent = KBDI.state === "ok" ? `Latest FFS value: ${KBDI.county} County ${KBDI.value} (range ${KBDI.min}–${KBDI.max}) for ${dmed(KBDI.date)}.` : KBDI.state === "loading" ? "Looking for the FFS value…" : "No FFS value found (data/kbdi.json). Enter today's KBDI to forecast it.";
+}
+
 function buildOutlook(){
-  const mem = active(), blend = blendAll(mem), days = outlookDays();
+  const mem = active(), blend = blendAll(mem), days = outlookDays(), KB = kbdiFor(days.map(d => d.date), mem);
   const cols = days.map(day => {
     const idx = windowHours(day);
     const rx = idx.map(i => rxAt(i, mem, blend));
@@ -592,7 +656,7 @@ function buildOutlook(){
       }
     });
     const verdict = !prefs.rx.length || !known ? "" : nIn >= Math.max(3, idx.length/3) ? "go" : nIn > 0 ? "marg" : "no";
-    return { day, idx, nIn, known, run, peak: chances.length ? Math.max(...chances) : null, vals, spread, verdict, lim: limitsOf(idx, blend) };
+    return { day, idx, nIn, known, run, peak: chances.length ? Math.max(...chances) : null, vals, spread, verdict, lim: limitsOf(idx, blend), kb: KB ? KB[day.date] : null, rain: rainStat(day.date, mem) };
   });
   return { cols, mem };
 }
@@ -609,6 +673,12 @@ function renderOutlook(){
       if (r.k === "rxh"){ const cls = c.verdict === "go" ? "go" : c.verdict === "marg" ? "warn" : c.verdict === "no" ? "bad" : ""; h += `<td class="rxv ${cls}">${prefs.rx.length ? (c.known ? `${c.nIn} of ${c.idx.length} h` : "—") : "no Rx"}</td>`; continue; }
       if (r.k === "rxp"){ h += `<td>${c.run ? `${hhmm(c.run.a)}–${endLabel(c.run.b)}${tzTag()}` : prefs.rx.length ? "none" : ""}</td>`; continue; }
       if (r.k === "rxc"){ h += `<td>${c.peak == null ? "" : c.peak}</td>`; continue; }
+      if (r.k === "kbdi"){
+        const k = c.kb; if (!k || k.v == null){ h += `<td title="Enter today's KBDI under Burn unit and window">—</td>`; continue; }
+        const sub = k.obs ? (k.src === "manual" ? "entered" : "FFS") : (Math.round(k.lo) !== Math.round(k.hi) ? `${Math.round(k.lo)}–${Math.round(k.hi)}` : "");
+        h += `<td title="${k.obs ? "Today's value" : "Forecast"}: ${kbdiCat(k.v)}">${Math.round(k.v)}${sub ? `<span class="rg">${sub}</span>` : ""}</td>`; continue;
+      }
+      if (r.k === "rain"){ const x = c.rain; h += `<td>${x ? x.v.toFixed(2) : "—"}${x && x.lo.toFixed(2) !== x.hi.toFixed(2) ? `<span class="rg">${x.lo.toFixed(2)}–${x.hi.toFixed(2)}</span>` : ""}</td>`; continue; }
       const v = c.vals[j], sp = c.spread[j];
       const dc = r.s === "max" || r.s === "min" ? dayCls(r.f, v, r.s) : { c:"", t:"" };
       const rg = sp && fmt(r.f, sp[0]) !== fmt(r.f, sp[1]) ? `<span class="rg">${fmt(r.f, sp[0])}–${fmt(r.f, sp[1])}</span>` : "";
@@ -644,7 +714,7 @@ function renderHourly(){
   const win = new Set(c.idx);
   HR = { idx, blend, mem, day:c.day, win:c.idx, col:c };
   $("viewTitle").textContent = `Hourly forecast, ${dayName(c.day.date, true)}`;
-  $("viewSub").textContent = `${G.pt.name}. Burn window ${windowLabel(c.day)} (sunrise ${hhmm(c.day.rise)}, sunset ${hhmm(c.day.set)}${tzTag()}). Hover a value to see the range across the models.`;
+  $("viewSub").textContent = `${G.pt.name}. Burn window ${windowLabel(c.day)} (sunrise ${hhmm(c.day.rise)}, sunset ${hhmm(c.day.set)}${tzTag()}). Hover a value to see the range across the models.${c.kb && c.kb.v != null ? ` KBDI ${c.kb.obs ? "" : "about "}${Math.round(c.kb.v)} (${kbdiCat(c.kb.v)}${c.kb.obs ? (c.kb.src === "manual" ? ", entered" : ", FFS") : ", forecast"}).` : ""}`;
   let h = `<thead><tr><th scope="col" style="text-align:left">Time (${tzTag()})</th>${idx.map(i => `<th scope="col"${prefs.span === "day" && win.has(i) ? ' style="box-shadow:inset 0 -3px 0 var(--acc)"' : ""}>${hhmm(G.times[i])}</th>`).join("")}</tr></thead><tbody>`;
   const rx = idx.map(i => rxAt(i, mem, blend));
   for (const r of HR_ROWS){
@@ -682,7 +752,7 @@ function downloadCSV(){
     OUT_ROWS.forEach((r, j) => {
       if (r.g) return;
       const name = r.f ? `${r.l} (${F[r.f].dir ? "dir" : unitOf(r.f)})` : r.l;
-      lines.push([name, ...cols.map(c => r.k === "rxh" ? (c.known ? c.nIn : "") : r.k === "rxp" ? (c.run ? `${hhmm(c.run.a)}-${endLabel(c.run.b)}${tzTag()}` : "") : r.k === "rxc" ? c.peak : fmt(r.f, c.vals[j]))].map(csvCell).join(","));
+      lines.push([name, ...cols.map(c => r.k === "rxh" ? (c.known ? c.nIn : "") : r.k === "rxp" ? (c.run ? `${hhmm(c.run.a)}-${endLabel(c.run.b)}${tzTag()}` : "") : r.k === "rxc" ? c.peak : r.k === "kbdi" ? (c.kb && c.kb.v != null ? Math.round(c.kb.v) : "") : r.k === "rain" ? (c.rain ? c.rain.v.toFixed(2) : "") : fmt(r.f, c.vals[j]))].map(csvCell).join(","));
     });
   } else {
     const { idx, blend, mem } = HR;
@@ -740,13 +810,19 @@ function discOutlook(o){
     if (grp.size) s.push(`Limiting factors: ${[...grp].map(([k, d]) => `${k} on ${list(d)}`).join("; ")}.`);
   }
   const rlo = ext("rh", "min", false), rhi = ext("rh", "min", true), vp = ext("vpd", "max", true);
-  if (rlo && rhi) s.push(`Afternoon humidity bottoms out between ${fmt("rh", rlo.v)}% (${ds(rlo.c)}) and ${fmt("rh", rhi.v)}% (${ds(rhi.c)})${vp ? `, and VPD peaks near ${fmt("vpd", vp.v)} kPa on ${ds(vp.c)}` : ""}.`);
+  if (rlo && rhi) s.push(`Afternoon humidity bottoms out ${fmt("rh", rlo.v) === fmt("rh", rhi.v) ? `near ${fmt("rh", rlo.v)}% each day` : `between ${fmt("rh", rlo.v)}% (${ds(rlo.c)}) and ${fmt("rh", rhi.v)}% (${ds(rhi.c)})`}${vp ? `, and VPD peaks near ${fmt("vpd", vp.v)} kPa on ${ds(vp.c)}` : ""}.`);
   const wlo = ext("s20", "min", false), whi = ext("s20", "max", true), gh = ext("g20", "max", true);
-  if (wlo && whi) s.push(`20 ft winds run ${fmt("s20", wlo.v)}–${fmt("s20", whi.v)} ${prefs.wu}, strongest on ${ds(whi.c)}${gh ? (gh.c === whi.c ? ` with gusts near ${fmt("g20", gh.v)} ${prefs.wu}` : `, with the highest gusts near ${fmt("g20", gh.v)} ${prefs.wu} on ${ds(gh.c)}`) : ""}.`);
+  if (wlo && whi) s.push(`20 ft winds run ${fmt("s20", wlo.v) === fmt("s20", whi.v) ? `near ${fmt("s20", whi.v)}` : `${fmt("s20", wlo.v)}–${fmt("s20", whi.v)}`} ${prefs.wu}, strongest on ${ds(whi.c)}${gh ? (gh.c === whi.c ? ` with gusts near ${fmt("g20", gh.v)} ${prefs.wu}` : `, with the highest gusts near ${fmt("g20", gh.v)} ${prefs.wu} on ${ds(gh.c)}`) : ""}.`);
   const mh = ext("mh", "max", true), ml = ext("mh", "max", false), tw = ext("tw", "max", true), vr = ext("vr", "max", true);
   if (mh) s.push(`Mixing heights peak near ${fmt("mh", mh.v)} ft on ${ds(mh.c)}${ml && ml.c !== mh.c ? ` and are lowest on ${ds(ml.c)} near ${fmt("mh", ml.v)} ft` : ""}${tw ? `; transport winds are strongest on ${ds(tw.c)}, ${compass(ov(tw.c, "twd", "atmax"))} ${fmt("tw", tw.v)} ${prefs.wu}` : ""}${vr ? `, and ventilation is best on ${ds(vr.c)} near ${fmt("vr", vr.v)} m²/s` : ""}.`);
   const wet = cols.filter(c => (ov(c, "pop", "max") ?? 0) >= 20);
   s.push(wet.length ? `Rain chances reach ${fmt("pop", Math.max(...wet.map(c => ov(c, "pop", "max"))))}% ${wet.length > 1 ? `from ${ds(wet[0])} to ${ds(wet[wet.length - 1])}` : `on ${ds(wet[0])}`}.` : "Little or no rain is expected during the burn windows.");
+  const kb = cols.filter(c => c.kb && c.kb.v != null);
+  if (kb.length > 1){
+    const a = kb[0], b = kb[kb.length - 1], qa = Math.round(a.kb.v), qb = Math.round(b.kb.v);
+    const drop = kb.find((c, j) => j > 0 && c.kb.v <= kb[j - 1].kb.v - 10);
+    s.push(`KBDI is ${qa} ${a.kb.obs ? "today" : "on " + ds(a)} (${kbdiCat(qa)}) and is forecast ${Math.abs(qb - qa) < 5 ? `to hold near ${qb}` : `to ${qb > qa ? "rise" : "fall"} to about ${qb}`} by ${ds(b)}${drop ? `, with rain lowering it around ${ds(drop)}` : ""}.`);
+  }
   const late = cols.slice(4).map(c => ({ c, sp: osp(c, "rh", "min") })).filter(x => x.sp);
   if (late.length){ const w = late.reduce((a, b) => (b.sp[1] - b.sp[0]) > (a.sp[1] - a.sp[0]) ? b : a); if (w.sp[1] - w.sp[0] >= 12) s.push(`Confidence is lower late in the period: the models differ by ${Math.round(w.sp[1] - w.sp[0])}% on ${ds(w.c)}'s lowest humidity.`); }
   return s.join(" ");
@@ -768,6 +844,7 @@ function discHourly(h){
   if (mh) s.push(`Mixing heights rise to about ${fmt("mh", mh.v)} ft around ${t(mh.i)}${tw ? `, with transport winds up to ${compass(b.twd[tw.i])} ${fmt("tw", tw.v)} ${prefs.wu}` : ""}${vr ? `; ventilation peaks near ${fmt("vr", vr.v)} m²/s` : ""}.`);
   const mh0 = b.mh[w0]; if (mh0 != null && mh0 < 1000) s.push(`The mixed layer is shallow at the start (about ${fmt("mh", mh0)} ft), so smoke will stay low until it deepens.`);
   const pp = at("pop", true); if (pp && pp.v >= 20) s.push(`Rain chances reach ${fmt("pop", pp.v)}%.`);
+  const kq = h.col.kb; if (kq && kq.v != null) s.push(`KBDI is ${kq.obs ? "" : "forecast near "}${Math.round(kq.v)} (${kbdiCat(kq.v)}).`);
   if (prefs.rx.length){
     const c = h.col;
     if (c.run) s.push(`The forecast is in prescription ${runTxt(c.run)}${c.nIn > c.run.n ? ` (${c.nIn} h in all)` : ""}, with up to ${c.peak}% of models agreeing.`);
@@ -793,7 +870,10 @@ const worst = (...a) => a.includes("bad") ? "bad" : a.includes("warn") ? "warn" 
 function product(){
   if (!G || !OUT) return null;
   const pt = G.pt, iss = nowLocal(), issTxt = prefs.tz === "Z" ? (() => { const d = toZ(iss); return `${d.getUTCDate()} ${d.toLocaleDateString("en-US", { timeZone:"UTC", month:"short" })} ${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}Z`; })() : `${+iss.slice(8, 10)} ${new Date(iss.slice(0, 10) + "T12:00:00Z").toLocaleDateString("en-US", { timeZone:"UTC", month:"short" })} ${iss.slice(11, 13)}${iss.slice(14, 16)}L`;
-  const base = { pt, issued: issTxt, forecaster: (prefs.initials || "").toUpperCase(), winds: prefs.wu, disc: discText(), rx: rxSummary() };
+  let kbTxt = "";
+  if (prefs.view === "outlook"){ const kb = OUT.cols.filter(c => c.kb && c.kb.v != null); if (kb.length) kbTxt = `${Math.round(kb[0].kb.v)} ${kb[0].kb.obs ? "today" : dshort(kb[0].day.date)} (${kbdiCat(kb[0].kb.v)})${kb.length > 1 ? `, about ${Math.round(kb[kb.length - 1].kb.v)} by ${dshort(kb[kb.length - 1].day.date)}` : ""}`; }
+  else if (HR && HR.col.kb && HR.col.kb.v != null){ const k = HR.col.kb; kbTxt = `${k.obs ? "" : "about "}${Math.round(k.v)} (${kbdiCat(k.v)})${k.obs ? "" : ", forecast"}`; }
+  const base = { pt, issued: issTxt, kbdi: kbTxt, kbdiSrc: kbTxt ? kbdiSrcText() : "", forecaster: (prefs.initials || "").toUpperCase(), winds: prefs.wu, disc: discText(), rx: rxSummary() };
   if (prefs.view === "outlook"){
     const cols = OUT.cols;
     const head = ["Day","Burn window","Hrs in Rx","Best period","High °F","Min RH %","Max VPD kPa","20 ft wind","Mix ht ft","Transport","Vent m²/s","Rain %"];
@@ -841,7 +921,7 @@ function productHTML(P){
   if (!P) return '<p class="mut">Waiting for guidance…</p>';
   const cell = c => `<td class="${c.f ? "p" + c.f : ""}${c.b ? " pb" : ""}">${c.t === "" || c.t == null ? "–" : esc(c.t)}</td>`;
   return `<div class="fwh"><img src="${ASSET}45ws-logo.png" alt="" onerror="this.style.visibility='hidden'"><div><h2>${esc(P.title)}</h2><p>45th Weather Squadron · prescribed burn support</p></div><img src="${ASSET}ussf-seal.png" alt="" onerror="this.style.visibility='hidden'"></div>
-    <table class="fwi"><tr><th>Burn unit</th><td>${esc(P.pt.name)}</td><th>Issued</th><td>${esc(P.issued)}</td></tr><tr><th>Location</th><td>${P.pt.lat.toFixed(4)}, ${P.pt.lon.toFixed(4)}</td><th>Valid</th><td>${esc(P.valid)}</td></tr><tr><th>Forecaster</th><td>${esc(P.forecaster)}</td><th>Winds</th><td>${esc(P.winds)}</td></tr></table>
+    <table class="fwi"><tr><th>Burn unit</th><td>${esc(P.pt.name)}</td><th>Issued</th><td>${esc(P.issued)}</td></tr><tr><th>Location</th><td>${P.pt.lat.toFixed(4)}, ${P.pt.lon.toFixed(4)}</td><th>Valid</th><td>${esc(P.valid)}</td></tr><tr><th>Forecaster</th><td>${esc(P.forecaster)}</td><th>Winds</th><td>${esc(P.winds)}</td></tr>${P.kbdi ? `<tr><th>KBDI</th><td>${esc(P.kbdi)}</td><th>Source</th><td>${esc(P.kbdiSrc)}</td></tr>` : ""}</table>
     <div class="fwbox"><b>Discussion</b><p>${esc(P.disc) || "&nbsp;"}</p></div>
     <div class="fwbox"><b>Prescription</b><p>${esc(P.rx)}</p></div>
     <table class="fwt"><tr>${P.head.map(h => `<th>${esc(h)}</th>`).join("")}</tr>${P.kind === "hourly" ? `<tr class="fwd"><td colspan="${P.head.length}">${esc(P.dayLabel)}</td></tr>` : ""}${P.rows.map(r => `<tr${r.dim ? ' class="dim"' : ""}>${r.cells.map(cell).join("")}</tr>`).join("")}</table>
@@ -911,6 +991,7 @@ async function productPDF(P){
   text("45th Weather Squadron  ·  Prescribed Burn Support", (X0 + X1)/2, 68, 9, { color:[220,228,238], align:"c" });
   let y = 88;
   const info = [["Burn unit", P.pt.name, "Issued", P.issued], ["Location", `${P.pt.lat.toFixed(4)}, ${P.pt.lon.toFixed(4)}`, "Valid", P.valid], ["Forecaster", P.forecaster, "Winds", P.winds]];
+  if (P.kbdi) info.push(["KBDI", P.kbdi, "Source", P.kbdiSrc]);
   const cw = [0.14, 0.36, 0.12, 0.38].map(v => v*(X1 - X0));
   for (const row of info){ let x = X0; row.forEach((v, j) => { if (j % 2 === 0) rect(x, y, cw[j], 15, GREY); box(x, y, cw[j], 15, .5); text(v, x + 4, y + 10.5, 8, { bold: j % 2 === 0, max: cw[j] - 8 }); x += cw[j]; }); y += 15; }
   y += 8;
@@ -1077,6 +1158,9 @@ function init(){
     prefs.custom = { name: $("cName").value.trim() || "Burn unit", lat, lon }; prefs.site = "custom"; save(); renderSites(); fetchGuidance();
   };
   $("cName").onchange = () => { prefs.custom.name = $("cName").value.trim() || "Burn unit"; save(); renderSites(); if (G && prefs.site === "custom"){ G.pt.name = prefs.custom.name; render(); } };
+  $("kbdiIn").value = prefs.kbdiManual ?? ""; $("annRain").value = prefs.annRain;
+  $("kbdiIn").onchange = () => { const v = $("kbdiIn").value.trim(); prefs.kbdiManual = v === "" || !isFinite(+v) ? "" : String(Math.max(0, Math.min(800, Math.round(+v)))); $("kbdiIn").value = prefs.kbdiManual; changed(); };
+  $("annRain").onchange = () => { const v = parseFloat($("annRain").value); prefs.annRain = v > 0 ? v : 50; $("annRain").value = prefs.annRain; changed(); };
   $("wA").onchange = () => { const v = parseFloat($("wA").value); prefs.wA = isFinite(v) ? v : 0; changed(); };
   $("wB").onchange = () => { const v = parseFloat($("wB").value); prefs.wB = isFinite(v) ? v : 0; changed(); };
   $("rxAdd").onclick = () => { prefs.rx.push({ f:"vpd", op:"<=", v:2.0 }); changed(true); };
@@ -1085,7 +1169,7 @@ function init(){
   $("spanSel").onclick = e => { const b = e.target.closest("[data-s]"); if (!b) return; prefs.span = b.dataset.s; save(); render(); };
   $("wuSel").onclick = e => { const b = e.target.closest("[data-u]"); if (!b) return; prefs.wu = b.dataset.u; changed(true); };
   $("tzSel").onclick = e => { const b = e.target.closest("[data-tz]"); if (!b) return; prefs.tz = b.dataset.tz; save(); render(); };
-  $("refresh").onclick = () => { fetchGuidance(); checkSpots(); };
+  $("refresh").onclick = () => { fetchGuidance(); checkSpots(); loadKBDI(); };
   $("csvBtn").onclick = downloadCSV;
   $("pdfBtn").onclick = downloadPDF; $("pdfBtn2").onclick = downloadPDF;
   $("initials").value = prefs.initials || "";
@@ -1111,9 +1195,9 @@ function init(){
   mark();
   /* the outlook is always the first view on opening */
   prefs.view = "outlook";
-  renderSites(); renderRx(); renderModels(); render(); fetchGuidance(); checkSpots();
+  renderSites(); renderRx(); renderModels(); render(); fetchGuidance(); checkSpots(); loadKBDI();
   /* refresh every 30 minutes while the page is open */
-  setInterval(() => { if (!document.hidden){ fetchGuidance(); checkSpots(); } }, 30*60*1000);
+  setInterval(() => { if (!document.hidden){ fetchGuidance(); checkSpots(); loadKBDI(); } }, 30*60*1000);
 }
 init();
 </script>

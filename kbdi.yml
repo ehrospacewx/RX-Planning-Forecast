@@ -1,0 +1,31 @@
+name: Update KBDI
+
+# FDACS updates the KBDI report at 1:15 pm EST / 2:15 pm EDT (18:15 UTC either way).
+on:
+  schedule:
+    - cron: "40 18 * * *"
+    - cron: "25 20 * * *"   # second try in case the first runs early or FDACS is late
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  kbdi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fetch the FFS county KBDI table
+        run: python .github/scripts/fetch_kbdi.py
+      - name: Commit data/kbdi.json if it changed
+        run: |
+          if [ -n "$(git status --porcelain data/kbdi.json)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add data/kbdi.json
+            git commit -m "Update KBDI"
+            git push
+          fi
