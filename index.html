@@ -113,7 +113,7 @@ input[type=number]{width:84px}
 .paper .fwbox p{margin:0;white-space:pre-wrap}
 .paper .fwt{margin-top:10px;font-variant-numeric:tabular-nums}
 .paper .fwt th,.paper .fwt td{border:1px solid #9aa3ab;padding:4px 5px;text-align:center;font-size:12px;white-space:nowrap}
-.paper .fwt th{background:#e2e6e9;border-color:#6b747c}
+.paper .fwt th{background:#e2e6e9;border-color:#6b747c;white-space:normal;line-height:1.2}
 .paper .fwt .fwd td{background:#f4f6f7;text-align:left;font-weight:700}
 .paper .fwt td.pgo{background:#d2ecd8}.paper .fwt td.pwarn{background:#fdecba}.paper .fwt td.pbad{background:#fbd7d4}
 .paper .fwt td.pb{font-weight:700}
@@ -791,8 +791,8 @@ function product(){
   const base = { pt, issued: issTxt, forecaster: (prefs.initials || "").toUpperCase(), winds: prefs.wu, disc: discText(), rx: rxSummary() };
   if (prefs.view === "outlook"){
     const cols = OUT.cols;
-    const head = ["Day","Burn window","Hrs in Rx","Best period","Agree %","High °F","Min RH %","Max VPD kPa","20 ft wind","Mix ht ft","Transport","Vent m²/s","Rain %"];
-    const wts = [0.9, 1.05, 0.62, 1.05, 0.55, 0.55, 0.6, 0.62, 1.05, 0.7, 0.85, 0.75, 0.5];
+    const head = ["Day","Burn window","Hrs in Rx","Best period","High °F","Min RH %","Max VPD kPa","20 ft wind","Mix ht ft","Transport","Vent m²/s","Rain %"];
+    const wts = [0.9, 1.05, 0.62, 1.05, 0.55, 0.6, 0.62, 1.05, 0.7, 0.85, 0.75, 0.5];
     const rows = cols.map(c => {
       const dc = (f, s) => dayCls(f, ov(c, f, s), s).c;
       const lo = ov(c, "s20", "min"), hi = ov(c, "s20", "max"), g = ov(c, "g20", "max");
@@ -801,7 +801,7 @@ function product(){
       return { cells: [
         { t: dmed(c.day.date), b:true }, { t: windowLabel(c.day) },
         { t: prefs.rx.length ? (c.known ? `${c.nIn} of ${c.idx.length}` : "-") : "", f: v, b:true }, { t: c.run ? runTxt(c.run) : prefs.rx.length ? "none" : "" },
-        { t: c.peak ?? "" }, { t: fmt("t", ov(c, "t", "max")), f: dc("t", "max") }, { t: fmt("rh", ov(c, "rh", "min")), f: dc("rh", "min") },
+        { t: fmt("t", ov(c, "t", "max")), f: dc("t", "max") }, { t: fmt("rh", ov(c, "rh", "min")), f: dc("rh", "min") },
         { t: fmt("vpd", ov(c, "vpd", "max")), f: dc("vpd", "max") }, { t: wind, f: worst(dc("s20", "min"), dc("s20", "max"), dc("g20", "max")) },
         { t: fmt("mh", ov(c, "mh", "max")), f: dc("mh", "max") }, { t: ov(c, "tw", "max") == null ? "" : `${compass(ov(c, "twd", "atmax"))} ${fmt("tw", ov(c, "tw", "max"))}`, f: dc("tw", "max") },
         { t: fmt("vr", ov(c, "vr", "max")), f: dc("vr", "max") }, { t: fmt("pop", ov(c, "pop", "max")), f: dc("pop", "max") } ] };
@@ -810,26 +810,25 @@ function product(){
     return { ...base, title:"Fire Weather Outlook", kind:"outlook",
       valid: first ? `${dmed(first.day.date)} – ${dmed(last.day.date)}, daily burn windows` : "",
       head, wts, rows,
-      notes: `Each row covers that day's burn window, sunrise ${prefs.wA >= 0 ? "+" : "-"}${Math.abs(prefs.wA)} h to sunset ${prefs.wB >= 0 ? "-" : "+"}${Math.abs(prefs.wB)} h. Values are extremes inside the window from blended ${OUT.mem.map(m => m.n).join(", ")} guidance: high temperature, lowest RH, highest VPD, 20 ft sustained range with peak (G), highest mixing height, strongest transport wind, best ventilation and highest rain chance. Hrs in Rx: hours the blended forecast meets every criterion. Agree: highest share of models meeting every criterion in one hour. Green meets the limit, amber misses it at some hours, red misses it at every hour. VPD: vapor pressure deficit.` };
+      notes: `Each row covers that day's burn window, sunrise ${prefs.wA >= 0 ? "+" : "-"}${Math.abs(prefs.wA)} h to sunset ${prefs.wB >= 0 ? "-" : "+"}${Math.abs(prefs.wB)} h. Values are extremes inside the window from blended ${OUT.mem.map(m => m.n).join(", ")} guidance: high temperature, lowest RH, highest VPD, 20 ft sustained range with peak (G), highest mixing height, strongest transport wind, best ventilation and highest rain chance. Hrs in Rx: hours the blended forecast meets every criterion. Green meets the limit, amber misses it at some hours, red misses it at every hour. VPD: vapor pressure deficit.` };
   }
   const { idx, blend, mem, day, col } = HR;
-  const head = ["Time","Sky","Temp °F","RH %","VPD kPa","20 ft wind","Mix ht ft","Transport","Vent m²/s","Rain %","In Rx","Agree %"];
-  const wts = [0.75, 0.55, 0.65, 0.55, 0.65, 1.15, 0.8, 1.0, 0.85, 0.6, 0.55, 0.65];
+  const head = ["Time","Sky","Temp °F","RH %","VPD kPa","20 ft wind","Mix ht ft","Transport","Vent m²/s","Rain %","In Rx"];
+  const wts = [0.75, 0.55, 0.65, 0.55, 0.65, 1.15, 0.8, 1.0, 0.85, 0.6, 0.55];
   const win = new Set(col.idx);
   const rows = idx.map(i => {
     const r = rxAt(i, mem, blend), cc = f => cellCls(f, blend[f][i]);
-    const ag = r.chance == null ? "" : r.chance >= 70 ? "go" : r.chance >= 30 ? "warn" : "bad";
     return { dim: !win.has(i), cells: [
       { t: hhmm(G.times[i]) + tzTag(), b:true }, { t: skyCat(blend.sky[i]) }, { t: fmt("t", blend.t[i]), f: cc("t") }, { t: fmt("rh", blend.rh[i]), f: cc("rh") },
       { t: fmt("vpd", blend.vpd[i]), f: cc("vpd") }, { t: windTxt(blend.dir[i], blend.s20[i], blend.g20[i]), f: worst(cc("s20"), cc("g20")) },
       { t: fmt("mh", blend.mh[i]), f: cc("mh") }, { t: blend.tw[i] == null ? "" : `${compass(blend.twd[i])} ${fmt("tw", blend.tw[i])}`, f: cc("tw") },
       { t: fmt("vr", blend.vr[i]), f: cc("vr") }, { t: fmt("pop", blend.pop[i]), f: cc("pop") },
-      { t: r.blend == null ? (prefs.rx.length ? "-" : "") : r.blend ? "Yes" : "No", f: r.blend == null ? "" : r.blend ? "go" : "bad", b:true }, { t: r.chance ?? "", f: ag } ] };
+      { t: r.blend == null ? (prefs.rx.length ? "-" : "") : r.blend ? "Yes" : "No", f: r.blend == null ? "" : r.blend ? "go" : "bad", b:true } ] };
   });
   return { ...base, title:"Fire Weather Forecast", kind:"hourly", dayLabel: dayName(day.date, true),
     valid: `${dmed(day.date)} ${windowLabel(day)}${prefs.span === "day" ? " (full day shown)" : ""}`,
     head, wts, rows,
-    notes: `Hourly values from blended ${mem.map(m => m.n).join(", ")} guidance. 20 ft wind: direction, sustained speed and peak (G). Mixing height is above ground; transport wind is the mean wind through the mixed layer; ventilation is mixing height times transport wind. VPD: vapor pressure deficit. In Rx: the blended forecast meets every criterion. Agree: share of models meeting every criterion.${prefs.span === "day" ? " Gray rows are outside the burn window." : ""}` };
+    notes: `Hourly values from blended ${mem.map(m => m.n).join(", ")} guidance. 20 ft wind: direction, sustained speed and peak (G). Mixing height is above ground; transport wind is the mean wind through the mixed layer; ventilation is mixing height times transport wind. VPD: vapor pressure deficit. In Rx: the blended forecast meets every criterion.${prefs.span === "day" ? " Gray rows are outside the burn window." : ""}` };
 }
 
 /* ---------- on-screen preview ---------- */
