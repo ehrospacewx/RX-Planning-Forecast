@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Burn Outlook | KSC and CCSFS</title>
+<title>Burn Planning Forecast | KSC and CCSFS</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700&display=optional">
 <script>
@@ -74,6 +74,12 @@ td.go{background:var(--go);color:var(--goi);font-weight:600}
 td.warn{background:var(--warn);color:var(--warni);font-weight:600}
 td.bad{background:var(--bad);color:var(--badi);font-weight:600}
 td.rxv{font-weight:700}
+.rangebar{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin:0 0 10px;padding:8px 12px;border:1px solid var(--rule);border-radius:8px;background:var(--zebra);font-size:14px}
+.rangebar label{display:flex;gap:6px;align-items:center;font-weight:600}
+.rangebar input{width:118px}
+.rangebar input.bad{border-color:#c0392b;box-shadow:0 0 0 2px rgba(192,57,43,.25)}
+.rangebar .fmt{font-size:12.5px;color:var(--mut)}
+.rangebar .fmt b{color:var(--ink);font-weight:600}
 .spotbar{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline;padding:8px 12px;border:1px solid var(--rule);border-radius:8px;margin:0 0 10px;font-size:14px}
 .spotbar.on{background:var(--warn);border-color:var(--warni);color:var(--warni)}
 .spotbar.on a{color:inherit;font-size:15px}
@@ -170,7 +176,7 @@ input[type=number]{width:84px}
     <div class="printhead" id="printhead"></div>
     <div class="viewbar">
       <span class="seg" id="viewSel" role="group" aria-label="View">
-        <button type="button" data-v="outlook">7-day outlook</button>
+        <button type="button" data-v="outlook">Planning forecast</button>
         <button type="button" data-v="hourly">Hourly</button>
       </span>
       <span class="seg noprint" id="spanSel" role="group" aria-label="Hours shown" hidden>
@@ -181,9 +187,16 @@ input[type=number]{width:84px}
       <button class="btn" id="csvBtn">Download CSV</button>
       <button class="btn primary" id="pdfBtn2">Download PDF</button>
     </div>
+    <div class="rangebar noprint" id="rangebar" hidden>
+      <label>From <input type="text" id="rFrom" placeholder="14 Nov 2026" autocomplete="off" spellcheck="false" aria-describedby="rFmt"></label>
+      <label>To <input type="text" id="rTo" placeholder="17 Nov 2026" autocomplete="off" spellcheck="false" aria-describedby="rFmt"></label>
+      <button class="btn" id="rApply">Apply dates</button>
+      <span class="seg" id="rQuick" role="group" aria-label="Quick length"><button type="button" data-n="3">3 days</button><button type="button" data-n="4">4</button><button type="button" data-n="5">5</button><button type="button" data-n="7">7</button></span>
+      <span class="fmt" id="rFmt">Enter dates as <b>DD Mon YYYY</b>, for example <b>14 Nov 2026</b> (day, 3-letter month, 4-digit year). <span id="rAvail"></span></span>
+    </div>
     <div class="spotbar noprint" id="spotbar" hidden></div>
     <div class="days noprint" id="days" hidden></div>
-    <h2 id="viewTitle" style="margin-top:8px">7-day outlook</h2>
+    <h2 id="viewTitle" style="margin-top:8px">Planning forecast</h2>
     <p class="mut small" id="viewSub" style="margin:0 0 10px"></p>
     <div class="tablewrap"><table class="mx" id="mx"></table></div>
     <div class="legend" id="legend"></div>
@@ -191,8 +204,8 @@ input[type=number]{width:84px}
 
   <section class="panel noprint" id="prodPanel">
     <div class="prodbar">
-      <h2 id="prodTitle">Fire weather outlook</h2>
-      <span class="mut small">the finished product: Download PDF saves it. It follows the view above, the 7-day outlook or one day's hourly forecast.</span>
+      <h2 id="prodTitle">Fire weather planning forecast</h2>
+      <span class="mut small">the finished product: Download PDF saves it. It follows the view above: the planning forecast or one day's hourly forecast.</span>
       <span style="flex:1"></span>
       <label>Forecaster <input type="text" id="initials" maxlength="5" placeholder="Init" style="width:70px"></label>
       <button class="btn primary" id="pdfBtn">Download PDF</button>
@@ -234,7 +247,7 @@ input[type=number]{width:84px}
     <p><b>20 ft winds</b> come from the 10 m wind using a log profile (roughness 0.05 m). Peak winds scale the 10 m gust factor to 20 ft the same way.</p>
     <p><b>Mixing height</b> (ft above ground) is where a surface parcel, 0.5 K warmer than the 2 m temperature, meets the environmental potential temperature profile from the pressure-level data. <b>Transport wind</b> is the mean speed through the mixed layer, from 10 m up to the mixing height, with direction from the mean vector. <b>Ventilation</b> is mixing height times transport wind (m²/s).</p>
     <p><b>KBDI</b> (Keetch-Byram Drought Index, 0–800) starts from the Florida Forest Service's latest county mean for Brevard, saved daily to data/kbdi.json by the site's "Update KBDI" GitHub Action, or from a value you enter. Each later day applies the Keetch-Byram (1968) equation to the blended forecast: drying from the day's high temperature (mean annual rain 50 in by default), and 100 points off per inch of rain after the first 0.20 in of each rain spell. The small numbers are the range from running each model alone.</p>
-    <p><b>Outlook</b> columns cover each day's burn window, from sunrise and sunset at the point plus the offsets you set. Day 1 is today until the window closes, then tomorrow.</p>
+    <p><b>Planning forecast</b> columns cover each day's burn window, from sunrise and sunset at the point plus the offsets you set. By default it runs 7 days, starting today until the window closes, then tomorrow.</p>
   </section>
 </main>
 <div class="toast" id="toast"></div>
@@ -299,7 +312,7 @@ const load = () => { try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}
 const prefs = Object.assign({
   view:"outlook", span:"window", wu:"mph", tz:"L", site:"custom",
   custom:{ name:"Burn unit", lat:28.66, lon:-80.70 }, wA:1, wB:1,
-  rx: RX_EXAMPLE.map(c => ({ ...c })), models: MODELS.map(m => m.id), day:0, initials:"", disc:{}, kbdiManual:"", annRain:50,
+  rx: RX_EXAMPLE.map(c => ({ ...c })), models: MODELS.map(m => m.id), range:{ n:7 }, day:0, initials:"", disc:{}, kbdiManual:"", annRain:50,
 }, load());
 const save = () => { try { localStorage.setItem(LS_KEY, JSON.stringify(prefs)); } catch (e) {} };
 
@@ -483,11 +496,59 @@ function windowHours(day){
   return out;
 }
 function dayHours(day){ const out = []; G.times.forEach((t, i) => { if (t.slice(0, 10) === day.date) out.push(i); }); return out; }
-function outlookDays(){
+/* the first planning day: today, or tomorrow once today's burn window has closed */
+function defaultStart(){
   const now = nowLocal(), today = now.slice(0, 10);
   let k = G.days.findIndex(d => d.date === today); if (k < 0) k = 0;
   const d0 = G.days[k]; if (d0 && d0.date === today && mins(now) > windowOf(d0).b - 30) k++;
-  return G.days.slice(k, k + 7);
+  return k;
+}
+/* the planning days: a custom From/To range, or N days from the default start (7 unless changed) */
+function outlookDays(){
+  const r = prefs.range || { n:7 }, today = nowLocal().slice(0, 10);
+  if (r.from && r.to){ const days = G.days.filter(d => d.date >= r.from && d.date <= r.to && d.date >= today); if (days.length) return days; }
+  const k = defaultStart(); return G.days.slice(k, k + (+r.n || 7));
+}
+/* dates typed as DD Mon YYYY (14 Nov 2026); also accepts 14 Nov, 14NOV26, Nov 14 2026, 11/14/2026 and 2026-11-14 */
+function parseDay(str){
+  const s = String(str || "").trim().replace(/[,.]/g, " ").replace(/\s+/g, " ");
+  if (!s) return null;
+  const yr = v => v == null ? null : v.length === 2 ? 2000 + +v : +v;
+  let y = null, m = null, d = null, x;
+  if ((x = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))){ y = +x[1]; m = +x[2]; d = +x[3]; }
+  else if ((x = s.match(/^(\d{1,2}) ?([A-Za-z]{3,9}) ?(\d{2}|\d{4})?$/))){ d = +x[1]; m = MONTHS.indexOf(x[2].slice(0, 3).toLowerCase()) + 1; y = yr(x[3]); }
+  else if ((x = s.match(/^([A-Za-z]{3,9}) ?(\d{1,2})(?: (\d{2}|\d{4}))?$/))){ m = MONTHS.indexOf(x[1].slice(0, 3).toLowerCase()) + 1; d = +x[2]; y = yr(x[3]); }
+  else if ((x = s.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2}|\d{4}))?$/))){ m = +x[1]; d = +x[2]; y = yr(x[3]); }
+  else return null;
+  if (!(m >= 1 && m <= 12 && d >= 1 && d <= 31)) return null;
+  const today = nowLocal().slice(0, 10);
+  if (y == null){ y = +today.slice(0, 4); if (`${y}-${pad(m)}-${pad(d)}` < addDays(today, -60)) y++; }
+  const iso = `${y}-${pad(m)}-${pad(d)}`;
+  return new Date(iso + "T12:00:00Z").getUTCDate() === d ? iso : null;
+}
+function fmtDay(iso){ const d = new Date(iso + "T12:00:00Z"); return `${d.getUTCDate()} ${d.toLocaleDateString("en-US", { timeZone:"UTC", month:"short" })} ${d.getUTCFullYear()}`; }
+function applyRange(){
+  const fi = $("rFrom"), ti = $("rTo"), a = parseDay(fi.value), b = parseDay(ti.value);
+  fi.classList.toggle("bad", !a); ti.classList.toggle("bad", !b);
+  if (!a || !b){ toast("Enter both dates as DD Mon YYYY, for example 14 Nov 2026"); return; }
+  const today = nowLocal().slice(0, 10), last = G ? G.days[G.days.length - 1].date : addDays(today, 8);
+  let [f, t] = a <= b ? [a, b] : [b, a];
+  if (t < today){ toast("Those dates have already passed"); return; }
+  if (f > last){ toast(`Guidance only runs through ${fmtDay(last)}`); return; }
+  const f2 = f < today ? today : f, t2 = t > last ? last : t;
+  if (f2 !== f || t2 !== t) toast(`Trimmed to ${fmtDay(f2)} – ${fmtDay(t2)}, the dates with guidance`);
+  prefs.range = { from:f2, to:t2 }; prefs.day = 0; save(); render();
+}
+function renderRange(){
+  const bar = $("rangebar"); if (!bar) return;
+  bar.hidden = prefs.view !== "outlook";
+  const r = prefs.range || { n:7 }, today = nowLocal().slice(0, 10);
+  if (r.from && r.to && r.to < today){ prefs.range = { n:7 }; save(); }
+  document.querySelectorAll("#rQuick [data-n]").forEach(b => b.setAttribute("aria-pressed", String(!(prefs.range && prefs.range.from) && String((prefs.range && prefs.range.n) || 7) === b.dataset.n)));
+  if (!G) return;
+  const days = outlookDays(), last = G.days[G.days.length - 1].date;
+  for (const [id, d] of [["rFrom", days[0]], ["rTo", days[days.length - 1]]]){ const el = $(id); if (document.activeElement !== el && d){ el.value = fmtDay(d.date); el.classList.remove("bad"); } }
+  $("rAvail").textContent = `Guidance runs from today through ${fmtDay(last)}.`;
 }
 
 /* ============================================================
@@ -684,7 +745,7 @@ function buildOutlook(){
 }
 function renderOutlook(){
   const { cols, mem } = OUT = buildOutlook();
-  $("viewTitle").textContent = "7-day burn outlook";
+  $("viewTitle").textContent = `${cols.length}-day planning forecast` + (cols.length ? `, ${dmed(cols[0].day.date)} – ${dmed(cols[cols.length - 1].day.date)}` : "");
   $("viewSub").textContent = `${G.pt.name} (${G.pt.lat.toFixed(4)}, ${G.pt.lon.toFixed(4)}). Each column covers that day's burn window, sunrise ${prefs.wA >= 0 ? "+" : "−"}${Math.abs(prefs.wA)} h to sunset ${prefs.wB >= 0 ? "−" : "+"}${Math.abs(prefs.wB)} h. Values are the blended guidance from ${mem.map(m => m.n).join(", ")}. Click a day for its hourly forecast.`;
   let h = `<thead><tr><th scope="col" style="text-align:left">Day</th>${cols.map((c, j) => `<th scope="col"><a href="#" data-day="${j}" style="color:inherit;text-decoration:none">${esc(dayName(c.day.date))}</a><span class="sub">${esc(windowLabel(c.day))}</span></th>`).join("")}</tr></thead><tbody>`;
   OUT_ROWS.forEach((r, j) => {
@@ -765,7 +826,7 @@ function csvCell(s){ s = String(s ?? ""); return /[",\n]/.test(s) ? `"${s.replac
 function downloadCSV(){
   if (!G) return;
   const lines = [], pt = G.pt;
-  lines.push(`# ${pt.name} (${pt.lat.toFixed(4)}, ${pt.lon.toFixed(4)}) burn ${prefs.view === "outlook" ? "outlook" : "hourly forecast"}, issued ${nowLocal().replace("T", " ")} ET`);
+  lines.push(`# ${pt.name} (${pt.lat.toFixed(4)}, ${pt.lon.toFixed(4)}) burn ${prefs.view === "outlook" ? "planning forecast" : "hourly forecast"}, issued ${nowLocal().replace("T", " ")} ET`);
   if (prefs.rx.length) lines.push("# Prescription: " + prefs.rx.map(critText).join("; "));
   if (prefs.view === "outlook"){
     const { cols } = OUT;
@@ -826,7 +887,7 @@ function discOutlook(o){
     const good = cols.filter(c => c.verdict === "go"), marg = cols.filter(c => c.verdict === "marg");
     if (good.length) s.push(`The best burn ${good.length > 1 ? "days are" : "day is"} ${list(good.map(c => `${ds(c)} (${c.nIn} h in prescription${c.run ? `, ${runTxt(c.run)}` : ""})`))}.`);
     if (marg.length) s.push(`${list(marg.map(c => `${ds(c)} (${c.nIn} h)`))} ${marg.length > 1 ? "are" : "is"} marginal.`);
-    if (!good.length && !marg.length) s.push("No day this week has an hour that meets every prescription criterion in the blended guidance.");
+    if (!good.length && !marg.length) s.push("No day in this period has an hour that meets every prescription criterion in the blended guidance.");
     const grp = new Map();
     for (const c of cols.filter(c => c.verdict !== "go")){ const l = c.lim[0]; if (!l) continue; const k = critPhrase(l.c); if (!grp.has(k)) grp.set(k, []); grp.get(k).push(ds(c)); }
     if (grp.size) s.push(`Limiting factors: ${[...grp].map(([k, d]) => `${k} on ${list(d)}`).join("; ")}.`);
@@ -884,7 +945,7 @@ function rxSummary(){
   const crit = "Prescription: " + prefs.rx.filter(c => F[c.f]).map(critText).join("; ") + ".";
   if (prefs.view === "outlook"){
     const ok = OUT.cols.filter(c => c.run);
-    return crit + (ok.length ? ` In prescription: ${ok.map(c => `${dshort(c.day.date)} ${runTxt(c.run)}${c.nIn > c.run.n ? ` (${c.nIn} h)` : ""}`).join("; ")}.` : " No hour this week is in prescription.");
+    return crit + (ok.length ? ` In prescription: ${ok.map(c => `${dshort(c.day.date)} ${runTxt(c.run)}${c.nIn > c.run.n ? ` (${c.nIn} h)` : ""}`).join("; ")}.` : " No hour in this period is in prescription.");
   }
   return crit + (HR.col.run ? ` Forecast in prescription: ${dshort(HR.day.date)} ${runTxt(HR.col.run)}.` : " The forecast is not in prescription during the burn window.");
 }
@@ -915,7 +976,7 @@ function product(){
         { t: c.kb && c.kb.v != null ? Math.round(c.kb.v) : "", b: !!(c.kb && c.kb.obs) } ] };
     });
     const first = cols[0], last = cols[cols.length - 1];
-    return { ...base, title:"Fire Weather Outlook", kind:"outlook",
+    return { ...base, title:"Fire Weather Planning Forecast", kind:"outlook",
       valid: first ? `${dmed(first.day.date)} – ${dmed(last.day.date)}, daily burn windows` : "",
       head, wts, rows,
       notes: `Each row covers that day's burn window, sunrise ${prefs.wA >= 0 ? "+" : "-"}${Math.abs(prefs.wA)} h to sunset ${prefs.wB >= 0 ? "-" : "+"}${Math.abs(prefs.wB)} h. Values are extremes inside the window from blended ${OUT.mem.map(m => m.n).join(", ")} guidance: high temperature, lowest RH, highest VPD, 20 ft sustained range with peak (G), highest mixing height, strongest transport wind, best ventilation and highest rain chance. KBDI: today's Florida Forest Service Brevard County value (bold), later days forecast with the Keetch-Byram equation from forecast highs and rain. Hrs in Rx: hours the blended forecast meets every criterion. Green meets the limit, amber misses it at some hours, red misses it at every hour. VPD: vapor pressure deficit.` };
@@ -952,7 +1013,7 @@ function productHTML(P){
 }
 function renderProduct(){
   const P = product();
-  $("prodTitle").textContent = prefs.view === "outlook" ? "Fire weather outlook" : "Fire weather forecast";
+  $("prodTitle").textContent = prefs.view === "outlook" ? "Fire weather planning forecast" : "Fire weather forecast";
   const ta = $("disc");
   if (document.activeElement !== ta) ta.value = P ? P.disc : "";
   ta.style.height = "auto"; ta.style.height = Math.max(120, ta.scrollHeight + 4) + "px";
@@ -1051,7 +1112,7 @@ async function downloadPDF(){
   try {
     const blob = await productPDF(P), a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `${(P.pt.name || "Burn").replace(/[^A-Za-z0-9]+/g, "_")}_${P.kind === "outlook" ? "Fire_Weather_Outlook_" + nowLocal().slice(0, 10) : "Fire_Weather_Forecast_" + HR.day.date}.pdf`;
+    a.download = `${(P.pt.name || "Burn").replace(/[^A-Za-z0-9]+/g, "_")}_${P.kind === "outlook" ? "Fire_Weather_Planning_Forecast_" + (OUT.cols.length ? OUT.cols[0].day.date + "_to_" + OUT.cols[OUT.cols.length - 1].day.date : nowLocal().slice(0, 10)) : "Fire_Weather_Forecast_" + HR.day.date}.pdf`;
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   } catch (e) { toast("PDF failed: " + e.message); }
   btns.forEach(b => b.disabled = false);
@@ -1163,7 +1224,7 @@ function renderSpot(){
 function render(){
   seg("viewSel", "data-v", prefs.view); seg("spanSel", "data-s", prefs.span); seg("wuSel", "data-u", prefs.wu); seg("tzSel", "data-tz", prefs.tz);
   $("spanSel").hidden = prefs.view !== "hourly"; $("days").hidden = prefs.view !== "hourly";
-  renderSpot();
+  renderSpot(); renderRange();
   if (!G){ return; }
   const issued = new Date(G.fetched);
   $("issued").textContent = `Guidance fetched ${issued.toLocaleString("en-US", { timeZone:TZ, month:"short", day:"numeric", hour:"2-digit", minute:"2-digit", hourCycle:"h23" })} ET`;
@@ -1181,6 +1242,9 @@ function init(){
     prefs.custom = { name: $("cName").value.trim() || "Burn unit", lat, lon }; prefs.site = "custom"; save(); renderSites(); fetchGuidance();
   };
   $("cName").onchange = () => { prefs.custom.name = $("cName").value.trim() || "Burn unit"; save(); renderSites(); if (G && prefs.site === "custom"){ G.pt.name = prefs.custom.name; render(); } };
+  $("rApply").onclick = applyRange;
+  ["rFrom", "rTo"].forEach(id => $(id).addEventListener("keydown", e => { if (e.key === "Enter"){ e.preventDefault(); applyRange(); } }));
+  $("rQuick").onclick = e => { const b = e.target.closest("[data-n]"); if (!b) return; prefs.range = { n:+b.dataset.n }; prefs.day = 0; save(); ["rFrom", "rTo"].forEach(id => $(id).blur()); render(); };
   $("kbdiIn").value = prefs.kbdiManual ?? ""; $("annRain").value = prefs.annRain;
   $("kbdiIn").onchange = () => { const v = $("kbdiIn").value.trim(); prefs.kbdiManual = v === "" || !isFinite(+v) ? "" : String(Math.max(0, Math.min(800, Math.round(+v)))); $("kbdiIn").value = prefs.kbdiManual; changed(); };
   $("annRain").onchange = () => { const v = parseFloat($("annRain").value); prefs.annRain = v > 0 ? v : 50; $("annRain").value = prefs.annRain; changed(); };
