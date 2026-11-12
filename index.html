@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Burn Outlook | KSC and CCSFS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700&display=optional">
+<script>
+/* color theme shared with the other ER weather pages: auto, light or dark */
+(function(){ var t; try { t = localStorage.getItem("erwx:theme"); } catch (e) {} if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t); })();
+</script>
+<style>
+:root{
+  --bg:#f3f5f8; --panel:#ffffff; --ink:#15202b; --mut:#5d6b78; --rule:#d7dde4; --head:#0f2a44; --acc:#1f5f99;
+  --go:#d8f0dc; --goi:#1d6b2c; --warn:#fbeccb; --warni:#8a5a00; --bad:#f8d7d3; --badi:#9b2419; --zebra:#f7f9fb;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0e141a; --panel:#161e26; --ink:#e3e9ef; --mut:#93a1ae; --rule:#2a3540; --head:#0b1c2d; --acc:#6fb0ee;
+  --go:#173a22; --goi:#8fdca0; --warn:#3d3013; --warni:#f0c56b; --bad:#43201c; --badi:#f3a49a; --zebra:#121a21; color-scheme: dark; } }
+:root[data-theme="dark"]{
+  --bg:#0e141a; --panel:#161e26; --ink:#e3e9ef; --mut:#93a1ae; --rule:#2a3540; --head:#0b1c2d; --acc:#6fb0ee;
+  --go:#173a22; --goi:#8fdca0; --warn:#3d3013; --warni:#f0c56b; --bad:#43201c; --badi:#f3a49a; --zebra:#121a21; color-scheme: dark; }
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 Barlow,system-ui,-apple-system,"Segoe UI",sans-serif}
+a{color:var(--acc)}
+.pagenav{display:flex;flex-wrap:wrap;gap:2px 14px;align-items:center;padding:7px 18px;background:var(--head);font-size:13px}
+.pagenav a{color:#c9d6e3;text-decoration:none;padding:2px 0}
+.pagenav a:hover{color:#fff}.pagenav a.on{color:#fff;font-weight:700;border-bottom:2px solid #6fb0ee}
+.navsp{flex:1}
+.seg{display:inline-flex;border:1px solid var(--rule);border-radius:7px;overflow:hidden;background:var(--panel)}
+.seg button{border:0;background:transparent;color:var(--ink);padding:4px 10px;font:inherit;font-size:13px;cursor:pointer}
+.seg button+button{border-left:1px solid var(--rule)}
+.seg button[aria-pressed="true"]{background:var(--acc);color:#fff}
+.pagenav .seg{background:transparent;border-color:#36506a}.pagenav .seg button{color:#c9d6e3}.pagenav .seg button+button{border-color:#36506a}
+header.top{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:center;padding:14px 18px 10px}
+header.top h1{margin:0;font:700 26px/1.1 "Barlow Condensed",Barlow,sans-serif;letter-spacing:.2px}
+.where{color:var(--mut);font-size:14px}
+.sites{display:flex;flex-wrap:wrap;gap:6px}
+.sites button{border:1px solid var(--rule);background:var(--panel);color:var(--ink);border-radius:999px;padding:3px 11px;font:inherit;font-size:13px;cursor:pointer}
+.sites button[aria-pressed="true"]{background:var(--acc);border-color:var(--acc);color:#fff}
+.statusline{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;padding:6px 18px 10px;font-size:13px;color:var(--mut)}
+.statusline .spacer{flex:1}
+.btn{border:1px solid var(--rule);background:var(--panel);color:var(--ink);border-radius:7px;padding:5px 12px;font:inherit;font-size:13px;cursor:pointer}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+.btn:disabled{opacity:.5;cursor:default}
+.live::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:#9aa7b3;margin-right:6px;vertical-align:1px}
+.live.ok::before{background:#2e9b47}.live.err::before{background:#c0392b}.live.busy::before{background:#d39b1e}
+main{padding:0 18px 30px;display:grid;gap:14px}
+.panel{background:var(--panel);border:1px solid var(--rule);border-radius:10px;padding:14px 16px}
+.panel h2{margin:0 0 4px;font:700 19px/1.2 "Barlow Condensed",Barlow,sans-serif}
+.panel h3{margin:0 0 8px;font:600 16px/1.2 "Barlow Condensed",Barlow,sans-serif}
+.mut{color:var(--mut)}.small{font-size:12.5px}
+.viewbar{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;margin-bottom:10px}
+.viewbar .seg button{font-size:14px;padding:5px 14px}
+.days{display:flex;flex-wrap:wrap;gap:6px}
+.days button{border:1px solid var(--rule);background:var(--panel);color:var(--ink);border-radius:8px;padding:4px 10px;font:inherit;font-size:13px;cursor:pointer;line-height:1.2;text-align:left}
+.days button small{display:block;font-size:11px;color:var(--mut)}
+.days button[aria-pressed="true"]{outline:2px solid var(--acc);outline-offset:-1px}
+.days button.go{background:var(--go)}.days button.marg{background:var(--warn)}.days button.no{background:var(--bad)}
+.tablewrap{overflow-x:auto;border:1px solid var(--rule);border-radius:8px}
+table.mx{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:14px}
+table.mx th,table.mx td{border-bottom:1px solid var(--rule);padding:5px 8px;text-align:center;white-space:nowrap}
+table.mx thead th{position:sticky;top:0;background:var(--panel);font-weight:700;vertical-align:bottom;border-bottom:2px solid var(--rule)}
+table.mx thead th .sub{display:block;font-weight:500;color:var(--mut);font-size:12px}
+table.mx tbody th{text-align:left;font-weight:600;background:var(--panel);position:sticky;left:0;z-index:1;min-width:190px}
+table.mx tbody th .u{font-weight:400;color:var(--mut);font-size:12.5px;margin-left:4px}
+table.mx tr.grp th{background:var(--zebra);font:700 12px/1.2 Barlow,sans-serif;text-transform:uppercase;letter-spacing:.6px;color:var(--mut);padding-top:9px}
+table.mx tr.grp td{background:var(--zebra)}
+table.mx td .rg{display:block;font-size:11px;color:var(--mut);line-height:1.1}
+td.go{background:var(--go);color:var(--goi);font-weight:600}
+td.warn{background:var(--warn);color:var(--warni);font-weight:600}
+td.bad{background:var(--bad);color:var(--badi);font-weight:600}
+td.rxv{font-weight:700}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--mut);margin-top:8px}
+.legend span::before{content:"";display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px;border:1px solid var(--rule)}
+.legend .lg::before{background:var(--go)}.legend .lw::before{background:var(--warn)}.legend .lb::before{background:var(--bad)}
+.setup{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.field{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0;font-size:14px}
+.field label{display:flex;gap:6px;align-items:center}
+input[type=text],input[type=number],select{border:1px solid var(--rule);border-radius:6px;padding:4px 7px;background:var(--panel);color:var(--ink);font:inherit;font-size:14px}
+input[type=number]{width:84px}
+.rxlist{display:grid;gap:6px;margin:6px 0 8px}
+.rxrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.rxrow .unit{color:var(--mut);font-size:13px;min-width:36px}
+.rxrow button{border:0;background:transparent;color:var(--mut);font-size:18px;cursor:pointer;line-height:1;padding:0 4px}
+.models{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:14px}
+.notes{font-size:13px;color:var(--mut)}
+.notes p{margin:5px 0}
+.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--head);color:#fff;padding:8px 14px;border-radius:8px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.on{opacity:1}
+.printhead{display:none}
+@media print{
+  .pagenav,.statusline,.noprint,.viewbar .seg,.viewbar .btn{display:none!important}
+  body{background:#fff;color:#000;font-size:12px}
+  .panel{border:0;padding:0}
+  .printhead{display:block;font-size:12px;margin:0 0 6px}
+  table.mx{font-size:11px} table.mx th,table.mx td{padding:3px 5px}
+  .tablewrap{overflow:visible;border:0}
+  td.go,td.warn,td.bad,.days button{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+</style>
+</head>
+<body>
+<nav class="pagenav" aria-label="Products">
+  <a href="https://cyclonecizek.github.io/ERPlanningForecast/">Planning forecast</a>
+  <a href="https://cyclonecizek.github.io/ERPlanningForecast/taf.html">TAF generator</a>
+  <a href="https://cyclonecizek.github.io/ERPlanningForecast/mwp.html">Mission weather (MWP)</a>
+  <a href="https://cyclonecizek.github.io/ERPlanningForecast/burn.html">Burn forecasts</a>
+  <a class="on" href="./" aria-current="page">Burn outlook</a>
+  <a href="https://cyclonecizek.github.io/ERPlanningForecast/exposure.html">Exposure forecasts</a>
+  <a href="https://cyclonecizek.github.io/ERPlanningForecast/lmef.html">Launch forecast (LMEF)</a>
+  <a href="https://cyclonecizek.github.io/ERPlanningForecast/verify.html">Verification</a>
+  <span class="navsp"></span>
+  <span class="seg theme" role="group" aria-label="Color theme"><button type="button" data-th="auto">Auto</button><button type="button" data-th="light">Light</button><button type="button" data-th="dark">Dark</button></span>
+</nav>
+
+<header class="top">
+  <div>
+    <h1>Burn outlook</h1>
+    <div class="where" id="where">45th Weather Squadron · prescribed burn support</div>
+  </div>
+  <nav class="sites" id="sites" aria-label="Forecast point"></nav>
+</header>
+
+<div class="statusline">
+  <span class="live busy" id="live">Loading guidance</span>
+  <span id="issued"></span>
+  <span class="spacer"></span>
+  <span class="seg" id="wuSel" role="group" aria-label="Wind units"><button type="button" data-u="mph">mph</button><button type="button" data-u="kt">kt</button></span>
+  <span class="seg" id="tzSel" role="group" aria-label="Time zone"><button type="button" data-tz="L">Local</button><button type="button" data-tz="Z">Zulu</button></span>
+  <button class="btn" id="refresh">Refresh guidance</button>
+</div>
+
+<main>
+  <section class="panel">
+    <div class="printhead" id="printhead"></div>
+    <div class="viewbar">
+      <span class="seg" id="viewSel" role="group" aria-label="View">
+        <button type="button" data-v="outlook">7-day outlook</button>
+        <button type="button" data-v="hourly">Hourly</button>
+      </span>
+      <span class="seg noprint" id="spanSel" role="group" aria-label="Hours shown" hidden>
+        <button type="button" data-s="window">Burn window</button>
+        <button type="button" data-s="day">Full day</button>
+      </span>
+      <span class="spacer" style="flex:1"></span>
+      <button class="btn" id="csvBtn">Download CSV</button>
+      <button class="btn" id="printBtn">Print</button>
+    </div>
+    <div class="days noprint" id="days" hidden></div>
+    <h2 id="viewTitle" style="margin-top:8px">7-day outlook</h2>
+    <p class="mut small" id="viewSub" style="margin:0 0 10px"></p>
+    <div class="tablewrap"><table class="mx" id="mx"></table></div>
+    <div class="legend" id="legend"></div>
+  </section>
+
+  <section class="setup noprint">
+    <div class="panel">
+      <h3>Burn unit and window</h3>
+      <div class="field"><label>Name <input type="text" id="cName" maxlength="40" style="width:190px"></label></div>
+      <div class="field"><label>Lat <input type="number" id="cLat" step="0.0001"></label><label>Lon <input type="number" id="cLon" step="0.0001"></label><button class="btn" id="cGo">Use this point</button></div>
+      <div class="field"><label>Window starts <input type="number" id="wA" step="0.5" style="width:64px"> h after sunrise</label></div>
+      <div class="field"><label>Window ends <input type="number" id="wB" step="0.5" style="width:64px"> h before sunset</label></div>
+      <p class="mut small" style="margin:6px 0 0">Use negative numbers to start before sunrise or end after sunset. The outlook takes each day's extremes inside this window.</p>
+    </div>
+    <div class="panel">
+      <h3>Prescription</h3>
+      <div class="rxlist" id="rxlist"></div>
+      <button class="btn" id="rxAdd">Add criterion</button>
+      <button class="btn" id="rxReset">Reset to example</button>
+      <p class="mut small" style="margin:8px 0 0">Every criterion is checked hour by hour. An hour is in prescription when the blended forecast meets all of them. Model agreement is the share of models that put that hour in prescription.</p>
+    </div>
+    <div class="panel">
+      <h3>Guidance</h3>
+      <div class="models" id="models"></div>
+      <p class="mut small" style="margin:8px 0 0">NBM supplies surface elements only, so it is left out of the mixing height, transport wind and ventilation rows and from model agreement whenever the prescription uses them.</p>
+    </div>
+  </section>
+
+  <section class="panel notes noprint">
+    <h3 style="color:var(--ink)">How the numbers are made</h3>
+    <p><b>Source.</b> Open-Meteo hourly guidance from GFS, ECMWF IFS 0.25°, ICON, GEM and NBM. Each value is the mean of the models selected; the small gray numbers under outlook values are the spread of the same statistic across the models.</p>
+    <p><b>VPD</b> (vapor pressure deficit, kPa) is saturation vapor pressure at the 2 m temperature minus actual vapor pressure from the 2 m dew point, as each model reports it. Higher VPD means drier fuels and air that pulls moisture faster.</p>
+    <p><b>20 ft winds</b> come from the 10 m wind using a log profile (roughness 0.05 m). Peak winds scale the 10 m gust factor to 20 ft the same way.</p>
+    <p><b>Mixing height</b> (ft above ground) is where a surface parcel, 0.5 K warmer than the 2 m temperature, meets the environmental potential temperature profile from the pressure-level data. <b>Transport wind</b> is the mean speed through the mixed layer, from 10 m up to the mixing height, with direction from the mean vector. <b>Ventilation</b> is mixing height times transport wind (m²/s).</p>
+    <p><b>Outlook</b> columns cover each day's burn window, from sunrise and sunset at the point plus the offsets you set. Day 1 is today until the window closes, then tomorrow.</p>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+/* ============================================================
+   Settings
+   ============================================================ */
+const TZ = "America/New_York";
+const POINTS = [
+  { id:"lc39a", name:"LC-39A", lat:28.6083, lon:-80.6041 },
+  { id:"lc39b", name:"LC-39B", lat:28.6272, lon:-80.6208 },
+  { id:"slc41", name:"SLC-41", lat:28.5833, lon:-80.5830 },
+  { id:"slc40", name:"SLC-40", lat:28.5620, lon:-80.5772 },
+  { id:"slc37", name:"SLC-37", lat:28.5314, lon:-80.5650 },
+  { id:"lc36",  name:"LC-36",  lat:28.4710, lon:-80.5378 },
+  { id:"slf",   name:"SLF",    lat:28.6150, lon:-80.6945 },
+  { id:"xmr",   name:"XMR",    lat:28.4686, lon:-80.5667 },
+];
+const MODELS = [
+  { id:"gfs_seamless",    n:"GFS" },
+  { id:"ecmwf_ifs025",    n:"ECMWF" },
+  { id:"icon_seamless",   n:"ICON" },
+  { id:"gem_seamless",    n:"GEM" },
+  { id:"ncep_nbm_conus",  n:"NBM" },
+];
+const LEVELS = [1000, 975, 950, 925, 900, 850, 800, 700];
+const SFC_VARS = ["temperature_2m","dew_point_2m","relative_humidity_2m","vapour_pressure_deficit","wind_speed_10m","wind_gusts_10m","wind_direction_10m","precipitation_probability","cloud_cover","surface_pressure"];
+const LVL_VARS = LEVELS.flatMap(p => ["temperature","wind_speed","wind_direction","geopotential_height"].map(v => `${v}_${p}hPa`));
+const KT2MPH = 1.150779, KT2MS = 0.514444, M2FT = 3.28084;
+const Z0 = 0.05, Z20 = 6.096;
+
+/* element definitions. wind:true values are stored in knots */
+const F = {
+  sky:  { l:"Sky cover", u:"%", dec:0 },
+  t:    { l:"Temperature", u:"°F", dec:0 },
+  td:   { l:"Dew point", u:"°F", dec:0 },
+  rh:   { l:"Relative humidity", u:"%", dec:0, rx:true },
+  vpd:  { l:"Vapor pressure deficit", short:"VPD", u:"kPa", dec:2, rx:true, step:0.1 },
+  s20:  { l:"20 ft wind, sustained", short:"20 ft wind", wind:true, dec:0, rx:true },
+  g20:  { l:"20 ft wind, peak", short:"20 ft peak", wind:true, dec:0, rx:true },
+  dir:  { l:"20 ft wind direction", dir:true },
+  mh:   { l:"Mixing height", u:"ft AGL", dec:-2, rx:true, step:100 },
+  tw:   { l:"Transport wind", wind:true, dec:0, rx:true },
+  twd:  { l:"Transport wind direction", dir:true },
+  vr:   { l:"Ventilation rate", u:"m²/s", dec:-2, rx:true, step:500 },
+  pop:  { l:"Chance of rain", u:"%", dec:0, rx:true },
+};
+F.t.rx = true;
+const UPPER = new Set(["mh","tw","twd","vr"]);   /* need pressure-level data */
+const RX_EXAMPLE = [
+  { f:"rh",  op:">=", v:30 }, { f:"rh", op:"<=", v:55 },
+  { f:"vpd", op:"<=", v:2.0 },
+  { f:"s20", op:">=", v:4/KT2MPH }, { f:"s20", op:"<=", v:15/KT2MPH },
+  { f:"mh",  op:">=", v:1700 }, { f:"tw", op:">=", v:9/KT2MPH },
+];
+
+const LS_KEY = "burnoutlook:v1";
+const load = () => { try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch (e) { return {}; } };
+const prefs = Object.assign({
+  view:"outlook", span:"window", wu:"mph", tz:"L", site:"custom",
+  custom:{ name:"Burn unit", lat:28.66, lon:-80.70 }, wA:1, wB:1,
+  rx: RX_EXAMPLE.map(c => ({ ...c })), models: MODELS.map(m => m.id), day:0,
+}, load());
+const save = () => { try { localStorage.setItem(LS_KEY, JSON.stringify(prefs)); } catch (e) {} };
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" })[c]);
+let toastT; function toast(msg){ const t = $("toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("on"), 2600); }
+
+/* ============================================================
+   Physics
+   ============================================================ */
+const f2k = f => (f - 32)*5/9 + 273.15;
+const f2c = f => (f - 32)*5/9;
+const esat = c => 0.6112*Math.exp(17.67*c/(c + 243.5));            /* kPa */
+const theta = (tk, p) => tk*Math.pow(1000/p, 0.2857);
+const COMPASS = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+const compass = d => d == null ? "" : COMPASS[Math.round(((d % 360) + 360) % 360 / 22.5) % 16];
+const logScale = z => Math.log(z/Z0)/Math.log(10/Z0);
+
+/* mixing height (m AGL): parcel 0.5 K warmer than the 2 m air, lifted dry adiabatically */
+function mixHeight(sfcTF, ps, elev, lv){
+  if (sfcTF == null || ps == null) return null;
+  const tk = f2k(sfcTF), thP = theta(tk + 0.5, ps);
+  let prev = { z:2, d: theta(tk, ps) - thP }, any = false;
+  for (const L of lv){
+    if (L.p >= ps || L.t == null || L.z == null) continue;
+    const z = L.z - elev; if (z <= 10) continue;
+    any = true;
+    const d = theta(f2k(L.t), L.p) - thP;
+    if (d > 0) return Math.max(prev.z, prev.z + (z - prev.z)*(-prev.d)/(d - prev.d));
+    prev = { z, d };
+  }
+  return any ? prev.z : null;
+}
+/* transport wind: mean speed (kt) from 10 m to the mixing height; direction from the mean vector */
+function transport(mh, s10, d10, elev, lv){
+  if (mh == null || s10 == null) return { s:null, d:null };
+  const pts = [{ z:10, s:s10, d:d10 }];
+  for (const L of lv){ if (L.s == null || L.z == null) continue; const z = L.z - elev; if (z > 10) pts.push({ z, s:L.s, d:L.d }); }
+  pts.sort((a, b) => a.z - b.z);
+  const uv = p => { const r = (p.d ?? 0)*Math.PI/180; return [-p.s*Math.sin(r), -p.s*Math.cos(r)]; };
+  if (mh <= 10 || pts.length < 2) return { s:s10, d:d10 };
+  /* clip the profile at the mixing height */
+  const prof = [];
+  for (let i = 0; i < pts.length; i++){
+    const p = pts[i];
+    if (p.z <= mh){ prof.push({ z:p.z, s:p.s, uv:uv(p) }); continue; }
+    const q = pts[i - 1]; if (!q) break;
+    const f = (mh - q.z)/(p.z - q.z), a = uv(q), b = uv(p);
+    prof.push({ z:mh, s:q.s + f*(p.s - q.s), uv:[a[0] + f*(b[0] - a[0]), a[1] + f*(b[1] - a[1])] });
+    break;
+  }
+  if (prof.length < 2) return { s:s10, d:d10 };
+  let S = 0, U = 0, V = 0, Z = 0;
+  for (let i = 1; i < prof.length; i++){
+    const a = prof[i - 1], b = prof[i], dz = b.z - a.z; if (dz <= 0) continue;
+    S += (a.s + b.s)/2*dz; U += (a.uv[0] + b.uv[0])/2*dz; V += (a.uv[1] + b.uv[1])/2*dz; Z += dz;
+  }
+  if (!Z) return { s:s10, d:d10 };
+  return { s:S/Z, d:(Math.atan2(-U/Z, -V/Z)*180/Math.PI + 360) % 360 };
+}
+
+/* ============================================================
+   Guidance
+   ============================================================ */
+let G = null;   /* { times, members:[{id,n,x:{field:[...]}}], days, elev, off, fetched } */
+function curPoint(){
+  if (prefs.site === "custom") return { id:"custom", name: prefs.custom.name || "Burn unit", lat:+prefs.custom.lat, lon:+prefs.custom.lon };
+  return POINTS.find(p => p.id === prefs.site) || POINTS[0];
+}
+async function fetchGuidance(){
+  const pt = curPoint();
+  setLive("busy", "Loading guidance");
+  const url = "https://api.open-meteo.com/v1/forecast?" + new URLSearchParams({
+    latitude: pt.lat.toFixed(4), longitude: pt.lon.toFixed(4),
+    hourly: [...SFC_VARS, ...LVL_VARS].join(","), daily:"sunrise,sunset",
+    models: MODELS.map(m => m.id).join(","), forecast_days:"9", timezone:TZ,
+    wind_speed_unit:"kn", temperature_unit:"fahrenheit",
+  });
+  let js;
+  try {
+    const r = await fetch(url);
+    js = await r.json();
+    if (!r.ok || js.error) throw new Error(js && js.reason || `HTTP ${r.status}`);
+  } catch (e) {
+    setLive("err", "Guidance failed: " + e.message); if (G) render(); return;
+  }
+  const H = js.hourly, n = H.time.length, elev = js.elevation || 0;
+  /* the daily sunrise/sunset is the same for every model; take the first one present */
+  const D = js.daily, dk = k => D[k] || D[`${k}_${MODELS[0].id}`] || D[Object.keys(D).find(x => x.startsWith(k))];
+  const days = D.time.map((d, i) => ({ date:d, rise:dk("sunrise")[i], set:dk("sunset")[i] }));
+  const members = MODELS.map(m => {
+    const g = k => H[`${k}_${m.id}`] || new Array(n).fill(null);
+    const x = {}; for (const k of Object.keys(F)) x[k] = new Array(n).fill(null);
+    const T = g("temperature_2m"), Td = g("dew_point_2m"), RH = g("relative_humidity_2m"), VPD = g("vapour_pressure_deficit");
+    const S = g("wind_speed_10m"), Gu = g("wind_gusts_10m"), Dr = g("wind_direction_10m"), PS = g("surface_pressure");
+    const PoP = g("precipitation_probability"), CC = g("cloud_cover");
+    const lvA = LEVELS.map(p => ({ p, t:g(`temperature_${p}hPa`), s:g(`wind_speed_${p}hPa`), d:g(`wind_direction_${p}hPa`), z:g(`geopotential_height_${p}hPa`) }));
+    let hasSfc = false;
+    for (let i = 0; i < n; i++){
+      if (T[i] == null) continue; hasSfc = true;
+      x.t[i] = T[i]; x.td[i] = Td[i]; x.sky[i] = CC[i]; x.pop[i] = PoP[i];
+      x.rh[i] = RH[i] ?? (Td[i] != null ? Math.min(100, 100*esat(f2c(Td[i]))/esat(f2c(T[i]))) : null);
+      x.vpd[i] = VPD[i] ?? (Td[i] != null ? Math.max(0, esat(f2c(T[i])) - esat(f2c(Td[i]))) : null);
+      if (S[i] != null){
+        x.s20[i] = S[i]*logScale(Z20);
+        const gf = Gu[i] != null && S[i] >= 0.5 && Gu[i] >= S[i] ? Gu[i]/S[i] : 1.3;
+        x.g20[i] = x.s20[i]*(1 + (gf - 1)*Math.log(10/Z0)/Math.log(Z20/Z0));
+        x.dir[i] = Dr[i];
+      }
+      const lv = lvA.map(L => ({ p:L.p, t:L.t[i], s:L.s[i], d:L.d[i], z:L.z[i] }));
+      const mh = mixHeight(T[i], PS[i], elev, lv);
+      if (mh != null){
+        x.mh[i] = mh*M2FT;
+        const tw = transport(mh, S[i], Dr[i], elev, lv);
+        x.tw[i] = tw.s; x.twd[i] = tw.d;
+        if (tw.s != null) x.vr[i] = mh*tw.s*KT2MS;
+      }
+    }
+    return { id:m.id, n:m.n, x, has:hasSfc };
+  });
+  G = { times:H.time, members, days, elev, off:js.utc_offset_seconds || 0, fetched:Date.now(), pt };
+  const got = members.filter(m => m.has).map(m => m.n);
+  setLive("ok", `Guidance loaded: ${got.join(", ") || "none"}`);
+  render();
+}
+function setLive(cls, txt){ const l = $("live"); l.className = "live " + cls; l.textContent = txt; }
+
+/* ============================================================
+   Blending and prescription
+   ============================================================ */
+const active = () => G.members.filter(m => m.has && prefs.models.includes(m.id));
+function blendAt(f, i, mem){
+  if (F[f].dir){
+    const sk = f === "twd" ? "tw" : "s20"; let u = 0, v = 0, k = 0;
+    for (const m of mem){ const d = m.x[f][i], s = m.x[sk][i]; if (d == null) continue; const w = Math.max(0.3, s ?? 1), r = d*Math.PI/180; u += -w*Math.sin(r); v += -w*Math.cos(r); k++; }
+    return k ? (Math.atan2(-u, -v)*180/Math.PI + 360) % 360 : null;
+  }
+  let s = 0, k = 0; for (const m of mem){ const v = m.x[f][i]; if (v != null){ s += v; k++; } }
+  return k ? s/k : null;
+}
+const passes = (v, c) => v != null && (c.op === ">=" ? v >= c.v : c.op === ">" ? v > c.v : c.op === "<=" ? v <= c.v : v < c.v);
+function rxAt(i, mem, blend){
+  const crit = prefs.rx.filter(c => F[c.f]);
+  if (!crit.length) return { blend:null, chance:null };
+  const okB = crit.every(c => passes(blend[c.f][i], c));
+  const elig = mem.filter(m => crit.every(c => m.x[c.f][i] != null));
+  const met = elig.filter(m => crit.every(c => passes(m.x[c.f][i], c))).length;
+  return { blend: crit.some(c => blend[c.f][i] == null) ? null : okB, chance: elig.length ? Math.round(100*met/elig.length) : null, n:elig.length };
+}
+/* per-hour blended series for every element */
+function blendAll(mem){
+  const b = {}; for (const f of Object.keys(F)){ b[f] = G.times.map((_, i) => blendAt(f, i, mem)); }
+  return b;
+}
+
+/* ============================================================
+   Time helpers (Open-Meteo returns local wall-clock times for TZ)
+   ============================================================ */
+const mins = s => +s.slice(11, 13)*60 + +s.slice(14, 16);
+function nowLocal(){
+  const p = new Intl.DateTimeFormat("en-CA", { timeZone:TZ, year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", hourCycle:"h23" }).formatToParts(new Date());
+  const v = k => p.find(x => x.type === k).value; return `${v("year")}-${v("month")}-${v("day")}T${v("hour")}:${v("minute")}`;
+}
+function toZ(s){ const ms = Date.UTC(+s.slice(0,4), +s.slice(5,7) - 1, +s.slice(8,10), +s.slice(11,13), +s.slice(14,16)) - G.off*1000; return new Date(ms); }
+const pad = n => String(n).padStart(2, "0");
+function hhmm(s){ if (prefs.tz === "Z"){ const d = toZ(s); return pad(d.getUTCHours()) + pad(d.getUTCMinutes()); } return s.slice(11,13) + s.slice(14,16); }
+const tzTag = () => prefs.tz === "Z" ? "Z" : "L";
+function dayName(date, long){ const d = new Date(date + "T12:00:00Z"); return d.toLocaleDateString("en-US", { timeZone:"UTC", weekday: long ? "long" : "short", month:"short", day:"numeric" }); }
+function mmToHHMM(m){ m = Math.max(0, Math.min(24*60 - 1, Math.round(m))); return pad(Math.floor(m/60)) + pad(m % 60); }
+/* window bounds in minutes after local midnight */
+function windowOf(day){ return { a: mins(day.rise) + (+prefs.wA || 0)*60, b: mins(day.set) - (+prefs.wB || 0)*60 }; }
+function windowLabel(day){
+  const w = windowOf(day);
+  if (prefs.tz === "Z"){ const base = day.date + "T00:00"; const z = m => { const d = toZ(base); d.setUTCMinutes(d.getUTCMinutes() + m); return pad(d.getUTCHours()) + pad(d.getUTCMinutes()); }; return `${z(w.a)}–${z(w.b)}Z`; }
+  return `${mmToHHMM(w.a)}–${mmToHHMM(w.b)}L`;
+}
+/* hour indices whose middle falls in the window */
+function windowHours(day){
+  const w = windowOf(day), out = [];
+  G.times.forEach((t, i) => { if (t.slice(0, 10) !== day.date) return; const mid = mins(t) + 30; if (mid >= w.a && mid <= w.b) out.push(i); });
+  return out;
+}
+function dayHours(day){ const out = []; G.times.forEach((t, i) => { if (t.slice(0, 10) === day.date) out.push(i); }); return out; }
+function outlookDays(){
+  const now = nowLocal(), today = now.slice(0, 10);
+  let k = G.days.findIndex(d => d.date === today); if (k < 0) k = 0;
+  const d0 = G.days[k]; if (d0 && d0.date === today && mins(now) > windowOf(d0).b - 30) k++;
+  return G.days.slice(k, k + 7);
+}
+
+/* ============================================================
+   Formatting
+   ============================================================ */
+const wf = () => prefs.wu === "kt" ? 1 : KT2MPH;
+function unitOf(f){ return F[f].wind ? prefs.wu : F[f].u || ""; }
+function fmt(f, v){
+  if (v == null || !isFinite(v)) return "";
+  const d = F[f]; if (d.dir) return compass(v);
+  if (d.wind) v *= wf();
+  if (d.dec < 0){ const q = Math.pow(10, -d.dec); return (Math.round(v/q)*q).toLocaleString("en-US"); }
+  return d.dec ? v.toFixed(d.dec) : String(Math.round(v));
+}
+const dispV = (f, v) => F[f].wind ? v*wf() : v;
+const opTxt = op => ({ ">=":"≥", ">":">", "<=":"≤", "<":"<" })[op] || op;
+const numTxt = (f, v) => { const d = F[f]; return String(+v.toFixed(d.dec > 0 ? d.dec : 1)); };
+function critText(c){ const d = F[c.f]; return `${d.short || d.l} ${opTxt(c.op)} ${numTxt(c.f, dispV(c.f, c.v))}${d.wind ? " " + prefs.wu : d.u === "%" ? "%" : d.u ? " " + d.u.replace(" AGL", "") : ""}`; }
+/* hourly cell class against the prescription */
+function cellCls(f, v){
+  const cs = prefs.rx.filter(c => c.f === f); if (!cs.length || v == null) return "";
+  return cs.every(c => passes(v, c)) ? "go" : "bad";
+}
+/* daily extreme cell: a "worst" extreme past a limit = at times (amber); a "best" extreme past a limit = never met (red) */
+function dayCls(f, v, kind){
+  const cs = prefs.rx.filter(c => c.f === f); if (!cs.length || v == null) return { c:"", t:"" };
+  let cls = "go", tip = [];
+  for (const c of cs){
+    if (passes(v, c)) continue;
+    const lower = c.op === ">=" || c.op === ">";
+    const best = (lower && kind === "max") || (!lower && kind === "min");
+    if (best){ cls = "bad"; tip.push(`${critText(c)} not met at any hour`); }
+    else { if (cls !== "bad") cls = "warn"; tip.push(`${critText(c)} not met at some hours`); }
+  }
+  return { c:cls, t:tip.join("; ") };
+}
+
+/* ============================================================
+   Outlook (one column per day, extremes inside the burn window)
+   ============================================================ */
+const OUT_ROWS = [
+  { g:"Prescription" },
+  { k:"rxh", l:"Hours in prescription" },
+  { k:"rxp", l:"Best period" },
+  { k:"rxc", l:"Peak model agreement", u:"%" },
+  { g:"Temperature and moisture" },
+  { f:"t",   s:"max", l:"High temperature" },
+  { f:"rh",  s:"min", l:"Lowest RH" },
+  { f:"vpd", s:"max", l:"Highest VPD" },
+  { f:"sky", s:"mean", l:"Sky cover, average" },
+  { f:"pop", s:"max", l:"Chance of rain, highest" },
+  { g:"20 ft winds" },
+  { f:"s20", s:"min", l:"Lightest sustained" },
+  { f:"s20", s:"max", l:"Strongest sustained" },
+  { f:"g20", s:"max", l:"Highest peak" },
+  { f:"dir", s:"vec", l:"Prevailing direction" },
+  { g:"Smoke and dispersion" },
+  { f:"mh",  s:"max", l:"Highest mixing height" },
+  { f:"tw",  s:"max", l:"Strongest transport wind" },
+  { f:"twd", s:"atmax", of:"tw", l:"Transport direction at peak" },
+  { f:"vr",  s:"max", l:"Best ventilation" },
+];
+function stat(arr, idx, s){
+  const v = idx.map(i => arr[i]).filter(x => x != null); if (!v.length) return null;
+  if (s === "max") return Math.max(...v); if (s === "min") return Math.min(...v);
+  return v.reduce((a, b) => a + b, 0)/v.length;
+}
+function dirStat(f, sk, idx, src){
+  let u = 0, v = 0, k = 0;
+  for (const i of idx){ const d = src[f][i], s = src[sk][i]; if (d == null) continue; const w = Math.max(0.3, s ?? 1), r = d*Math.PI/180; u += -w*Math.sin(r); v += -w*Math.cos(r); k++; }
+  return k ? (Math.atan2(-u, -v)*180/Math.PI + 360) % 360 : null;
+}
+function cellStat(row, idx, src){
+  if (row.s === "vec") return dirStat(row.f, "s20", idx, src);
+  if (row.s === "atmax"){ let bi = null, bv = -1; for (const i of idx){ const v = src[row.of][i]; if (v != null && v > bv){ bv = v; bi = i; } } return bi == null ? null : src[row.f][bi]; }
+  return stat(src[row.f], idx, row.s);
+}
+/* the longest run of consecutive in-prescription hours */
+function bestRun(idx, ok){
+  let best = null, cur = null;
+  idx.forEach((i, j) => {
+    if (ok[j]){ if (cur && cur.e === j - 1) cur.e = j; else cur = { s:j, e:j }; if (!best || cur.e - cur.s > best.e - best.s) best = { ...cur }; }
+  });
+  return best ? { a:G.times[idx[best.s]], b:G.times[idx[best.e]], n:best.e - best.s + 1 } : null;
+}
+function endLabel(t){ /* end of an hour that starts at t */
+  const d = new Date(Date.UTC(+t.slice(0,4), +t.slice(5,7) - 1, +t.slice(8,10), +t.slice(11,13) + 1)); const s = d.toISOString().slice(0, 16); return hhmm(s);
+}
+let OUT = null;  /* last outlook, for CSV */
+function buildOutlook(){
+  const mem = active(), blend = blendAll(mem), days = outlookDays();
+  const cols = days.map(day => {
+    const idx = windowHours(day);
+    const rx = idx.map(i => rxAt(i, mem, blend));
+    const okH = rx.map(r => r.blend === true);
+    const nIn = okH.filter(Boolean).length, known = rx.filter(r => r.blend != null).length;
+    const run = bestRun(idx, okH);
+    const chances = rx.map(r => r.chance).filter(x => x != null);
+    const vals = {}, spread = {};
+    OUT_ROWS.forEach((r, j) => {
+      if (!r.f) return;
+      vals[j] = cellStat(r, idx, blend);
+      if (!F[r.f].dir){
+        const per = mem.map(m => cellStat(r, idx, m.x)).filter(x => x != null);
+        if (per.length > 1) spread[j] = [Math.min(...per), Math.max(...per)];
+      }
+    });
+    const verdict = !prefs.rx.length || !known ? "" : nIn >= Math.max(3, idx.length/3) ? "go" : nIn > 0 ? "marg" : "no";
+    return { day, idx, nIn, known, run, peak: chances.length ? Math.max(...chances) : null, vals, spread, verdict };
+  });
+  return { cols, mem };
+}
+function renderOutlook(){
+  const { cols, mem } = OUT = buildOutlook();
+  $("viewTitle").textContent = "7-day burn outlook";
+  $("viewSub").textContent = `${G.pt.name} (${G.pt.lat.toFixed(4)}, ${G.pt.lon.toFixed(4)}). Each column covers that day's burn window, sunrise ${prefs.wA >= 0 ? "+" : "−"}${Math.abs(prefs.wA)} h to sunset ${prefs.wB >= 0 ? "−" : "+"}${Math.abs(prefs.wB)} h. Values are the blended guidance from ${mem.map(m => m.n).join(", ")}. Click a day for its hourly forecast.`;
+  let h = `<thead><tr><th scope="col" style="text-align:left">Day</th>${cols.map((c, j) => `<th scope="col"><a href="#" data-day="${j}" style="color:inherit;text-decoration:none">${esc(dayName(c.day.date))}</a><span class="sub">${esc(windowLabel(c.day))}</span></th>`).join("")}</tr></thead><tbody>`;
+  OUT_ROWS.forEach((r, j) => {
+    if (r.g){ h += `<tr class="grp"><th colspan="${cols.length + 1}">${esc(r.g)}</th></tr>`; return; }
+    const unit = r.f ? (F[r.f].dir ? "" : unitOf(r.f)) : r.u || "";
+    h += `<tr><th scope="row">${esc(r.l)}${unit ? `<span class="u">${esc(unit)}</span>` : ""}</th>`;
+    for (const c of cols){
+      if (r.k === "rxh"){ const cls = c.verdict === "go" ? "go" : c.verdict === "marg" ? "warn" : c.verdict === "no" ? "bad" : ""; h += `<td class="rxv ${cls}">${prefs.rx.length ? (c.known ? `${c.nIn} of ${c.idx.length} h` : "—") : "no Rx"}</td>`; continue; }
+      if (r.k === "rxp"){ h += `<td>${c.run ? `${hhmm(c.run.a)}–${endLabel(c.run.b)}${tzTag()}` : prefs.rx.length ? "none" : ""}</td>`; continue; }
+      if (r.k === "rxc"){ h += `<td>${c.peak == null ? "" : c.peak}</td>`; continue; }
+      const v = c.vals[j], sp = c.spread[j];
+      const dc = r.s === "max" || r.s === "min" ? dayCls(r.f, v, r.s) : { c:"", t:"" };
+      const rg = sp && fmt(r.f, sp[0]) !== fmt(r.f, sp[1]) ? `<span class="rg">${fmt(r.f, sp[0])}–${fmt(r.f, sp[1])}</span>` : "";
+      h += `<td class="${dc.c}"${dc.t ? ` title="${esc(dc.t)}"` : ""}>${fmt(r.f, v) || "—"}${rg}</td>`;
+    }
+    h += "</tr>";
+  });
+  $("mx").innerHTML = h + "</tbody>";
+  $("mx").querySelectorAll("[data-day]").forEach(a => a.onclick = ev => { ev.preventDefault(); prefs.day = +a.dataset.day; prefs.view = "hourly"; save(); render(); });
+  $("legend").innerHTML = prefs.rx.length ? `<span class="lg">Meets the prescription limit</span><span class="lw">Limit missed at some hours</span><span class="lb">Limit missed at every hour</span><span>Gray numbers: range of that value across the models</span>` : `<span>Add prescription criteria below to color the outlook.</span>`;
+}
+
+/* ============================================================
+   Hourly view
+   ============================================================ */
+const HR_ROWS = [
+  { g:"Prescription" }, { k:"rxin", l:"In prescription" }, { k:"rxc", l:"Model agreement", u:"%" },
+  { g:"Temperature and moisture" }, { f:"sky" }, { f:"t" }, { f:"td" }, { f:"rh" }, { f:"vpd" }, { f:"pop" },
+  { g:"20 ft winds" }, { f:"s20", l:"Sustained" }, { f:"g20", l:"Peak" }, { f:"dir", l:"Direction" },
+  { g:"Smoke and dispersion" }, { f:"mh" }, { f:"tw" }, { f:"twd", l:"Transport direction" }, { f:"vr" },
+];
+let HR = null;
+function renderDays(days){
+  $("days").innerHTML = days.map((c, j) => `<button type="button" data-day="${j}" aria-pressed="${j === prefs.day}" class="${c.verdict}">${esc(dayName(c.day.date))}<small>${prefs.rx.length ? (c.known ? `${c.nIn} h in Rx` : "no data") : esc(windowLabel(c.day))}</small></button>`).join("");
+  $("days").querySelectorAll("button").forEach(b => b.onclick = () => { prefs.day = +b.dataset.day; save(); render(); });
+}
+function renderHourly(){
+  const out = buildOutlook(), cols = out.cols, mem = out.mem; OUT = out;
+  if (prefs.day >= cols.length) prefs.day = 0;
+  renderDays(cols);
+  const c = cols[prefs.day]; if (!c){ $("mx").innerHTML = ""; return; }
+  const blend = blendAll(mem), idx = prefs.span === "day" ? dayHours(c.day) : c.idx;
+  const win = new Set(c.idx);
+  HR = { idx, blend, mem, day:c.day };
+  $("viewTitle").textContent = `Hourly forecast, ${dayName(c.day.date, true)}`;
+  $("viewSub").textContent = `${G.pt.name}. Burn window ${windowLabel(c.day)} (sunrise ${hhmm(c.day.rise)}, sunset ${hhmm(c.day.set)}${tzTag()}). Hover a value to see the range across the models.`;
+  let h = `<thead><tr><th scope="col" style="text-align:left">Time (${tzTag()})</th>${idx.map(i => `<th scope="col"${prefs.span === "day" && win.has(i) ? ' style="box-shadow:inset 0 -3px 0 var(--acc)"' : ""}>${hhmm(G.times[i])}</th>`).join("")}</tr></thead><tbody>`;
+  const rx = idx.map(i => rxAt(i, mem, blend));
+  for (const r of HR_ROWS){
+    if (r.g){ h += `<tr class="grp"><th colspan="${idx.length + 1}">${esc(r.g)}</th></tr>`; continue; }
+    if (r.k === "rxin"){ h += `<tr><th scope="row">${r.l}</th>${rx.map(x => `<td class="rxv ${x.blend === true ? "go" : x.blend === false ? "bad" : ""}">${x.blend === true ? "Yes" : x.blend === false ? "No" : prefs.rx.length ? "—" : ""}</td>`).join("")}</tr>`; continue; }
+    if (r.k === "rxc"){ h += `<tr><th scope="row">${r.l}<span class="u">%</span></th>${rx.map(x => `<td title="${x.n ? `${x.n} models checked` : ""}">${x.chance ?? ""}</td>`).join("")}</tr>`; continue; }
+    const d = F[r.f], unit = d.dir ? "" : unitOf(r.f);
+    h += `<tr><th scope="row">${esc(r.l || d.l)}${unit ? `<span class="u">${esc(unit)}</span>` : ""}</th>`;
+    for (const i of idx){
+      const v = blend[r.f][i];
+      let tip = "";
+      if (!d.dir){ const per = mem.map(m => [m.n, m.x[r.f][i]]).filter(p => p[1] != null); if (per.length) tip = per.map(p => `${p[0]} ${fmt(r.f, p[1])}`).join(" · "); }
+      else { const per = mem.map(m => [m.n, m.x[r.f][i]]).filter(p => p[1] != null); if (per.length) tip = per.map(p => `${p[0]} ${compass(p[1])}`).join(" · "); }
+      h += `<td class="${cellCls(r.f, v)}"${tip ? ` title="${esc(tip)}"` : ""}>${fmt(r.f, v)}</td>`;
+    }
+    h += "</tr>";
+  }
+  $("mx").innerHTML = h + "</tbody>";
+  $("legend").innerHTML = prefs.rx.length ? `<span class="lg">Meets every limit on that element</span><span class="lb">Outside a limit</span>${prefs.span === "day" ? "<span>Underlined hours are in the burn window</span>" : ""}` : "";
+}
+
+/* ============================================================
+   CSV and print
+   ============================================================ */
+function csvCell(s){ s = String(s ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; }
+function downloadCSV(){
+  if (!G) return;
+  const lines = [], pt = G.pt;
+  lines.push(`# ${pt.name} (${pt.lat.toFixed(4)}, ${pt.lon.toFixed(4)}) burn ${prefs.view === "outlook" ? "outlook" : "hourly forecast"}, issued ${nowLocal().replace("T", " ")} ET`);
+  if (prefs.rx.length) lines.push("# Prescription: " + prefs.rx.map(critText).join("; "));
+  if (prefs.view === "outlook"){
+    const { cols } = OUT;
+    lines.push(["element", ...cols.map(c => c.day.date)].map(csvCell).join(","));
+    lines.push(["burn_window", ...cols.map(c => windowLabel(c.day))].map(csvCell).join(","));
+    OUT_ROWS.forEach((r, j) => {
+      if (r.g) return;
+      const name = r.f ? `${r.l} (${F[r.f].dir ? "dir" : unitOf(r.f)})` : r.l;
+      lines.push([name, ...cols.map(c => r.k === "rxh" ? (c.known ? c.nIn : "") : r.k === "rxp" ? (c.run ? `${hhmm(c.run.a)}-${endLabel(c.run.b)}${tzTag()}` : "") : r.k === "rxc" ? c.peak : fmt(r.f, c.vals[j]))].map(csvCell).join(","));
+    });
+  } else {
+    const { idx, blend, mem } = HR;
+    lines.push(["element", ...idx.map(i => prefs.tz === "Z" ? toZ(G.times[i]).toISOString().slice(0, 16) + "Z" : G.times[i] + " L")].map(csvCell).join(","));
+    const rx = idx.map(i => rxAt(i, mem, blend));
+    lines.push(["in_prescription", ...rx.map(x => x.blend == null ? "" : x.blend ? "yes" : "no")].join(","));
+    lines.push(["model_agreement_pct", ...rx.map(x => x.chance ?? "")].join(","));
+    for (const f of Object.keys(F)) lines.push([`${F[f].l} (${F[f].dir ? "dir" : unitOf(f)})`, ...idx.map(i => fmt(f, blend[f][i]))].map(csvCell).join(","));
+  }
+  const blob = new Blob([lines.join("\n")], { type:"text/csv" }), a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${(pt.name || "Burn").replace(/[^A-Za-z0-9]+/g, "_")}_burn_${prefs.view}_${nowLocal().slice(0, 10)}.csv`;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+/* ============================================================
+   Controls
+   ============================================================ */
+function renderSites(){
+  const all = [{ id:"custom", name: prefs.custom.name || "Burn unit" }, ...POINTS];
+  $("sites").innerHTML = all.map(p => `<button type="button" data-s="${p.id}" aria-pressed="${p.id === prefs.site}">${esc(p.name)}</button>`).join("");
+  $("sites").querySelectorAll("button").forEach(b => b.onclick = () => { if (prefs.site === b.dataset.s) return; prefs.site = b.dataset.s; save(); renderSites(); fetchGuidance(); });
+}
+function renderRx(){
+  const opts = Object.keys(F).filter(k => F[k].rx);
+  $("rxlist").innerHTML = prefs.rx.map((c, j) => {
+    const d = F[c.f] || {};
+    return `<div class="rxrow" data-j="${j}">
+      <select data-k="f">${opts.map(k => `<option value="${k}"${k === c.f ? " selected" : ""}>${esc(F[k].l)}</option>`).join("")}</select>
+      <select data-k="op">${[">=","<="].map(o => `<option value="${o}"${o === c.op ? " selected" : ""}>${opTxt(o)}</option>`).join("")}</select>
+      <input type="number" data-k="v" value="${numTxt(c.f, dispV(c.f, c.v))}" step="${d.step || 1}">
+      <span class="unit">${esc(unitOf(c.f))}</span>
+      <button type="button" data-k="x" title="Remove" aria-label="Remove criterion">×</button></div>`;
+  }).join("") || `<p class="mut small" style="margin:0">No criteria. The outlook still shows the daily extremes.</p>`;
+  $("rxlist").querySelectorAll(".rxrow").forEach(row => {
+    const j = +row.dataset.j, c = prefs.rx[j];
+    row.querySelector('[data-k="f"]').onchange = e => { const v = dispV(c.f, c.v); c.f = e.target.value; c.v = F[c.f].wind ? v/wf() : v; changed(true); };
+    row.querySelector('[data-k="op"]').onchange = e => { c.op = e.target.value; changed(); };
+    row.querySelector('[data-k="v"]').onchange = e => { const v = parseFloat(e.target.value); if (!isFinite(v)) return; c.v = F[c.f].wind ? v/wf() : v; changed(); };
+    row.querySelector('[data-k="x"]').onclick = () => { prefs.rx.splice(j, 1); changed(true); };
+  });
+}
+function renderModels(){
+  $("models").innerHTML = MODELS.map(m => `<label><input type="checkbox" data-m="${m.id}"${prefs.models.includes(m.id) ? " checked" : ""}> ${m.n}</label>`).join("");
+  $("models").querySelectorAll("input").forEach(b => b.onchange = () => {
+    const on = [...$("models").querySelectorAll("input:checked")].map(x => x.dataset.m);
+    if (!on.length){ b.checked = true; toast("Keep at least one model"); return; }
+    prefs.models = on; changed();
+  });
+}
+function changed(rerx){ save(); if (rerx) renderRx(); render(); }
+function seg(id, attr, val){ document.querySelectorAll(`#${id} [${attr}]`).forEach(b => b.setAttribute("aria-pressed", String(b.getAttribute(attr) === String(val)))); }
+function render(){
+  seg("viewSel", "data-v", prefs.view); seg("spanSel", "data-s", prefs.span); seg("wuSel", "data-u", prefs.wu); seg("tzSel", "data-tz", prefs.tz);
+  $("spanSel").hidden = prefs.view !== "hourly"; $("days").hidden = prefs.view !== "hourly";
+  if (!G){ return; }
+  const issued = new Date(G.fetched);
+  $("issued").textContent = `Guidance fetched ${issued.toLocaleString("en-US", { timeZone:TZ, month:"short", day:"numeric", hour:"2-digit", minute:"2-digit", hourCycle:"h23" })} ET`;
+  $("printhead").innerHTML = `<b>45th Weather Squadron burn ${prefs.view === "outlook" ? "outlook" : "forecast"}</b> · ${esc(G.pt.name)} · issued ${esc(nowLocal().replace("T", " "))} ET${prefs.rx.length ? `<br>Prescription: ${esc(prefs.rx.map(critText).join("; "))}` : ""}`;
+  if (prefs.view === "outlook") renderOutlook(); else renderHourly();
+}
+
+function init(){
+  $("cName").value = prefs.custom.name; $("cLat").value = prefs.custom.lat; $("cLon").value = prefs.custom.lon;
+  $("wA").value = prefs.wA; $("wB").value = prefs.wB;
+  $("cGo").onclick = () => {
+    const lat = parseFloat($("cLat").value), lon = parseFloat($("cLon").value);
+    if (!(lat >= 24 && lat <= 32 && lon >= -88 && lon <= -79)){ toast("Enter a latitude and longitude in Florida"); return; }
+    prefs.custom = { name: $("cName").value.trim() || "Burn unit", lat, lon }; prefs.site = "custom"; save(); renderSites(); fetchGuidance();
+  };
+  $("cName").onchange = () => { prefs.custom.name = $("cName").value.trim() || "Burn unit"; save(); renderSites(); if (G && prefs.site === "custom"){ G.pt.name = prefs.custom.name; render(); } };
+  $("wA").onchange = () => { const v = parseFloat($("wA").value); prefs.wA = isFinite(v) ? v : 0; changed(); };
+  $("wB").onchange = () => { const v = parseFloat($("wB").value); prefs.wB = isFinite(v) ? v : 0; changed(); };
+  $("rxAdd").onclick = () => { prefs.rx.push({ f:"vpd", op:"<=", v:2.0 }); changed(true); };
+  $("rxReset").onclick = () => { prefs.rx = RX_EXAMPLE.map(c => ({ ...c })); changed(true); };
+  $("viewSel").onclick = e => { const b = e.target.closest("[data-v]"); if (!b) return; prefs.view = b.dataset.v; save(); render(); };
+  $("spanSel").onclick = e => { const b = e.target.closest("[data-s]"); if (!b) return; prefs.span = b.dataset.s; save(); render(); };
+  $("wuSel").onclick = e => { const b = e.target.closest("[data-u]"); if (!b) return; prefs.wu = b.dataset.u; changed(true); };
+  $("tzSel").onclick = e => { const b = e.target.closest("[data-tz]"); if (!b) return; prefs.tz = b.dataset.tz; save(); render(); };
+  $("refresh").onclick = fetchGuidance;
+  $("csvBtn").onclick = downloadCSV;
+  $("printBtn").onclick = () => window.print();
+  /* theme toggle, shared with the other pages */
+  const cur = () => document.documentElement.getAttribute("data-theme") || "auto";
+  const mark = () => document.querySelectorAll(".theme [data-th]").forEach(b => b.setAttribute("aria-pressed", b.getAttribute("data-th") === cur()));
+  document.querySelectorAll(".theme [data-th]").forEach(b => b.onclick = () => {
+    const t = b.getAttribute("data-th");
+    if (t === "auto") document.documentElement.removeAttribute("data-theme"); else document.documentElement.setAttribute("data-theme", t);
+    try { localStorage.setItem("erwx:theme", t); } catch (e) {}
+    mark();
+  });
+  mark();
+  /* the outlook is always the first view on opening */
+  prefs.view = "outlook";
+  renderSites(); renderRx(); renderModels(); render(); fetchGuidance();
+  /* refresh every 30 minutes while the page is open */
+  setInterval(() => { if (!document.hidden) fetchGuidance(); }, 30*60*1000);
+}
+init();
+</script>
+</body>
+</html>
