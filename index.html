@@ -311,9 +311,11 @@ const LS_KEY = "burnoutlook:v1";
 const load = () => { try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch (e) { return {}; } };
 const prefs = Object.assign({
   view:"outlook", span:"window", wu:"mph", tz:"L", site:"custom",
-  custom:{ name:"Burn unit", lat:28.66, lon:-80.70 }, wA:1, wB:1,
+  custom:{ name:"Burn unit", lat:28.66, lon:-80.70 }, wA:0, wB:0,
   rx: RX_EXAMPLE.map(c => ({ ...c })), models: MODELS.map(m => m.id), range:{ n:7 }, day:0, initials:"", disc:{}, kbdiManual:"", annRain:50,
 }, load());
+/* the default burn window became sunrise to sunset: reset the old +1 h / -1 h offsets once */
+if (prefs.winVer !== 2){ prefs.wA = 0; prefs.wB = 0; prefs.winVer = 2; }
 const save = () => { try { localStorage.setItem(LS_KEY, JSON.stringify(prefs)); } catch (e) {} };
 
 const $ = id => document.getElementById(id);
@@ -483,6 +485,11 @@ const tzTag = () => prefs.tz === "Z" ? "Z" : "L";
 function dayName(date, long){ const d = new Date(date + "T12:00:00Z"); return d.toLocaleDateString("en-US", { timeZone:"UTC", weekday: long ? "long" : "short", month:"short", day:"numeric" }); }
 function mmToHHMM(m){ m = Math.max(0, Math.min(24*60 - 1, Math.round(m))); return pad(Math.floor(m/60)) + pad(m % 60); }
 /* window bounds in minutes after local midnight */
+/* "sunrise to sunset", or with the offsets: "1 h after sunrise to 1 h before sunset" */
+function winText(){
+  const a = +prefs.wA || 0, b = +prefs.wB || 0, h = v => `${Math.abs(v)} h`;
+  return `${a ? `${h(a)} ${a > 0 ? "after" : "before"} sunrise` : "sunrise"} to ${b ? `${h(b)} ${b > 0 ? "before" : "after"} sunset` : "sunset"}`;
+}
 function windowOf(day){ return { a: mins(day.rise) + (+prefs.wA || 0)*60, b: mins(day.set) - (+prefs.wB || 0)*60 }; }
 function windowLabel(day){
   const w = windowOf(day);
@@ -573,7 +580,19 @@ function cellCls(f, v){
   return cs.every(c => passes(v, c)) ? "go" : "bad";
 }
 /* daily extreme cell: a "worst" extreme past a limit = at times (amber); a "best" extreme past a limit = never met (red) */
+/* lowest RH in the burn window: fixed bands (green 54% or lower, yellow 55-64%, red 65% or higher),
+   still flagged yellow if it drops below a prescription minimum */
+const RH_BANDS = { yellow:55, red:65 };
+function rhMinCls(v){
+  const r = Math.round(v);
+  let c = r >= RH_BANDS.red ? "bad" : r >= RH_BANDS.yellow ? "warn" : "go";
+  let t = r >= RH_BANDS.red ? `Lowest RH ${r}%: 65% or higher` : r >= RH_BANDS.yellow ? `Lowest RH ${r}%: 55-64%` : `Lowest RH ${r}%: 54% or lower`;
+  const lo = prefs.rx.filter(x => x.f === "rh" && (x.op === ">=" || x.op === ">")).find(x => !passes(v, x));
+  if (lo){ if (c === "go") c = "warn"; t += `; below the prescription minimum (${critText(lo)})`; }
+  return { c, t };
+}
 function dayCls(f, v, kind){
+  if (f === "rh" && kind === "min" && v != null) return rhMinCls(v);
   const cs = prefs.rx.filter(c => c.f === f); if (!cs.length || v == null) return { c:"", t:"" };
   let cls = "go", tip = [];
   for (const c of cs){
@@ -746,7 +765,7 @@ function buildOutlook(){
 function renderOutlook(){
   const { cols, mem } = OUT = buildOutlook();
   $("viewTitle").textContent = `${cols.length}-day planning forecast` + (cols.length ? `, ${dmed(cols[0].day.date)} – ${dmed(cols[cols.length - 1].day.date)}` : "");
-  $("viewSub").textContent = `${G.pt.name} (${G.pt.lat.toFixed(4)}, ${G.pt.lon.toFixed(4)}). Each column covers that day's burn window, sunrise ${prefs.wA >= 0 ? "+" : "−"}${Math.abs(prefs.wA)} h to sunset ${prefs.wB >= 0 ? "−" : "+"}${Math.abs(prefs.wB)} h. Values are the blended guidance from ${mem.map(m => m.n).join(", ")}. Click a day for its hourly forecast.`;
+  $("viewSub").textContent = `${G.pt.name} (${G.pt.lat.toFixed(4)}, ${G.pt.lon.toFixed(4)}). Each column covers that day's burn window, ${winText()}. Values are the blended guidance from ${mem.map(m => m.n).join(", ")}. Click a day for its hourly forecast.`;
   let h = `<thead><tr><th scope="col" style="text-align:left">Day</th>${cols.map((c, j) => `<th scope="col"><a href="#" data-day="${j}" style="color:inherit;text-decoration:none">${esc(dayName(c.day.date))}</a><span class="sub">${esc(windowLabel(c.day))}</span></th>`).join("")}</tr></thead><tbody>`;
   OUT_ROWS.forEach((r, j) => {
     if (r.g){ h += `<tr class="grp"><th colspan="${cols.length + 1}">${esc(r.g)}</th></tr>`; return; }
@@ -771,7 +790,7 @@ function renderOutlook(){
   });
   $("mx").innerHTML = h + "</tbody>";
   $("mx").querySelectorAll("[data-day]").forEach(a => a.onclick = ev => { ev.preventDefault(); prefs.day = +a.dataset.day; prefs.view = "hourly"; save(); render(); });
-  $("legend").innerHTML = prefs.rx.length ? `<span class="lg">Meets the prescription limit</span><span class="lw">Limit missed at some hours</span><span class="lb">Limit missed at every hour</span><span>Gray numbers: range of that value across the models</span>` : `<span>Add prescription criteria below to color the outlook.</span>`;
+  $("legend").innerHTML = prefs.rx.length ? `<span class="lg">Meets the prescription limit</span><span class="lw">Limit missed at some hours</span><span class="lb">Limit missed at every hour</span><span>Lowest RH: green 54% or lower, yellow 55–64%, red 65% or higher</span><span>Gray numbers: range of that value across the models</span>` : `<span>Add prescription criteria below to color the outlook.</span>`;
 }
 
 /* ============================================================
@@ -979,7 +998,7 @@ function product(){
     return { ...base, title:"Fire Weather Planning Forecast", kind:"outlook",
       valid: first ? `${dmed(first.day.date)} – ${dmed(last.day.date)}, daily burn windows` : "",
       head, wts, rows,
-      notes: `Each row covers that day's burn window, sunrise ${prefs.wA >= 0 ? "+" : "-"}${Math.abs(prefs.wA)} h to sunset ${prefs.wB >= 0 ? "-" : "+"}${Math.abs(prefs.wB)} h. Values are extremes inside the window from blended ${OUT.mem.map(m => m.n).join(", ")} guidance: high temperature, lowest RH, highest VPD, 20 ft sustained range with peak (G), highest mixing height, strongest transport wind, best ventilation and highest rain chance. KBDI: today's Florida Forest Service Brevard County value (bold), later days forecast with the Keetch-Byram equation from forecast highs and rain. Hrs in Rx: hours the blended forecast meets every criterion. Green meets the limit, amber misses it at some hours, red misses it at every hour. VPD: vapor pressure deficit.` };
+      notes: `Each row covers that day's burn window, ${winText()}. Values are extremes inside the window from blended ${OUT.mem.map(m => m.n).join(", ")} guidance: high temperature, lowest RH, highest VPD, 20 ft sustained range with peak (G), highest mixing height, strongest transport wind, best ventilation and highest rain chance. KBDI: today's Florida Forest Service Brevard County value (bold), later days forecast with the Keetch-Byram equation from forecast highs and rain. Hrs in Rx: hours the blended forecast meets every criterion. Green meets the limit, amber misses it at some hours, red misses it at every hour. Min RH: green 54% or lower, amber 55-64%, red 65% or higher. VPD: vapor pressure deficit.` };
   }
   const { idx, blend, mem, day, col } = HR;
   const head = ["Time","Sky","Temp °F","RH %","VPD kPa","20 ft wind","Mix ht ft","Transport","Vent m²/s","Rain %","In Rx"];
