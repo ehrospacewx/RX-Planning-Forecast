@@ -257,6 +257,7 @@ input[type=number]{width:84px}
     <p><b>VPD</b> (vapor pressure deficit, kPa) is saturation vapor pressure at the 2 m temperature minus actual vapor pressure from the 2 m dew point, as each model reports it. Higher VPD means drier fuels and air that pulls moisture faster.</p>
     <p><b>20 ft winds</b> come from the 10 m wind using a log profile (roughness 0.05 m). Peak winds scale the 10 m gust factor to 20 ft the same way.</p>
     <p><b>Mixing height</b> (ft above ground) is where a surface parcel, 0.5 K warmer than the 2 m temperature, meets the environmental potential temperature profile from the pressure-level data. <b>Transport wind</b> is the mean speed through the mixed layer, from 10 m up to the mixing height, with direction from the mean vector. <b>Ventilation</b> is mixing height times transport wind (m²/s).</p>
+    <p><b>LVORI</b> (low visibility occurrence risk index, 1–10) uses the same code as the burn page: the Lavdas dispersion index from a stability class (day or night at the Cape, sky cover and ceiling from low, mid and high cloud, and the 20 ft wind), mixing height and transport wind, then the MFL table from RH and that index. It is worked out for each model and hour and then blended; the planning forecast shows the highest value in the burn window.</p>
     <p><b>KBDI</b> (Keetch-Byram Drought Index, 0–800) starts from the Florida Forest Service's latest county mean for Brevard, saved daily to data/kbdi.json by the site's "Update KBDI" GitHub Action, or from a value you enter. Each later day applies the Keetch-Byram (1968) equation to the blended forecast: drying from the day's high temperature (mean annual rain 50 in by default), and 100 points off per inch of rain after the first 0.20 in of each rain spell. The small numbers are the range from running each model alone.</p>
     <p><b>Planning forecast</b> columns cover each day's burn window, from sunrise and sunset at the point plus the offsets you set. By default it runs 7 days, starting today until the window closes, then tomorrow.</p>
   </section>
@@ -287,7 +288,7 @@ const MODELS = [
   { id:"ncep_nbm_conus",  n:"NBM" },
 ];
 const LEVELS = [1000, 975, 950, 925, 900, 850, 800, 700];
-const SFC_VARS = ["precipitation","temperature_2m","dew_point_2m","relative_humidity_2m","vapour_pressure_deficit","wind_speed_10m","wind_gusts_10m","wind_direction_10m","precipitation_probability","cloud_cover","surface_pressure"];
+const SFC_VARS = ["cloud_cover_low","cloud_cover_mid","cloud_cover_high","precipitation","temperature_2m","dew_point_2m","relative_humidity_2m","vapour_pressure_deficit","wind_speed_10m","wind_gusts_10m","wind_direction_10m","precipitation_probability","cloud_cover","surface_pressure"];
 const LVL_VARS = LEVELS.flatMap(p => ["temperature","wind_speed","wind_direction","geopotential_height"].map(v => `${v}_${p}hPa`));
 const KT2MPH = 1.150779, KT2MS = 0.514444, M2FT = 3.28084;
 const Z0 = 0.05, Z20 = 6.096;
@@ -306,6 +307,8 @@ const F = {
   tw:   { l:"Transport wind", wind:true, dec:0, rx:true },
   twd:  { l:"Transport wind direction", dir:true },
   vr:   { l:"Ventilation rate", u:"m²/s", dec:-2, rx:true, step:500 },
+  di:   { l:"Dispersion index (LDSI)", short:"LDSI", u:"", dec:0 },
+  lvori:{ l:"LVORI", short:"LVORI", u:"1–10", dec:0, rx:true },
   pop:  { l:"Chance of rain", u:"%", dec:0, rx:true },
   pr:   { l:"Rainfall", u:"in", dec:2 },
 };
@@ -343,6 +346,60 @@ const theta = (tk, p) => tk*Math.pow(1000/p, 0.2857);
 const COMPASS = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
 const compass = d => d == null ? "" : COMPASS[Math.round(((d % 360) + 360) % 360 / 22.5) % 16];
 const logScale = z => Math.log(z/Z0)/Math.log(10/Z0);
+
+/* ---------- LDSI and LVORI, ported unchanged from the burn page (guidance.js) ----------
+   LDSI: TBW_MLB_MFL_DSI GFE tool (Lavdas). LVORI: MFL GFE table from RH and LDSI.
+   Inputs per model and hour: sky cover (%), ceiling (ft), 20 ft wind (kt), transport wind (kt),
+   mixing height (ft). Day or night follows the sun at the Space Coast. */
+const sunUp = t => {
+  /* solar elevation at 28.5 N, 80.7 W */
+  const d = new Date(t), doy = (Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - Date.UTC(d.getUTCFullYear(), 0, 0))/86400e3;
+  const g = 2*Math.PI/365*(doy - 1 + (d.getUTCHours() - 12)/24), dec = 0.006918 - 0.399912*Math.cos(g) + 0.070257*Math.sin(g) - 0.006758*Math.cos(2*g) + 0.000907*Math.sin(2*g);
+  const eq = 229.18*(0.000075 + 0.001868*Math.cos(g) - 0.032077*Math.sin(g) - 0.014615*Math.cos(2*g) - 0.040849*Math.sin(2*g));
+  const tst = d.getUTCHours()*60 + d.getUTCMinutes() + 30 + eq + 4*-80.7, ha = (tst/4 - 180)*Math.PI/180, lat = 28.5*Math.PI/180;
+  return Math.asin(Math.sin(lat)*Math.sin(dec) + Math.cos(lat)*Math.cos(dec)*Math.cos(ha)) > 0;
+};
+/* stability class by net radiation index (rows 4 .. -2) and 20 ft wind (kt) */
+const LAV_WIND = [1.5, 3.5, 5.5, 6.5, 7.5, 9.5, 10.5, 12.0];
+const LAV_STAB = { 4:[1,1,1,2,2,2,3,3,3], 3:[1,2,2,2,2,3,3,3,4], 2:[2,2,3,3,3,3,4,4,4], 1:[3,3,4,4,4,4,4,4,4], 0:[4,4,4,4,4,4,4,4,4], "-1":[6,6,5,5,4,4,4,4,4], "-2":[7,7,6,6,5,5,5,4,4] };
+function ldsiOf(sky, ceil, w20, tw, mh, t){
+  if (sky == null || w20 == null || tw == null || mh == null) return null;
+  const ovc = sky >= 95, day = sunUp(t);
+  let nri = 0;
+  if (!day){ nri = sky <= 40 ? -2 : !ovc ? -1 : ceil >= 7000 ? -1 : 0; }
+  else {
+    const d = new Date(t), doy = (Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - Date.UTC(d.getUTCFullYear(), 0, 0))/86400e3;
+    let ic = doy > 75 && doy < 270 ? 4 : 3;                    /* sun above 60 deg mid-March to late September, else above 35 deg */
+    if (sky > 50 && !ovc){ if (ceil < 7000) ic -= 2; else if (ceil < 16000) ic -= 1; }
+    if (ovc && ceil >= 7000) ic -= 1;
+    if (ic < 1) ic = 1;
+    nri = ovc && ceil < 7000 ? 0 : ic;
+  }
+  const col = LAV_WIND.findIndex(x => w20 < x), stab = LAV_STAB[String(nri)][col < 0 ? 8 : col];
+  const mm = Math.max(100, mh*0.3048), T = tw*0.5148;
+  if (!day){
+    if (stab === 4) return (mm >= 600 ? 3 : mm >= 400 ? 2.5 : 2)*T;
+    if (stab === 5) return 1.5*T;
+    if (stab > 5) return T;
+    return 0;
+  }
+  if (stab === 1) return (-0.0000007*mm*mm + 0.0104*mm - 0.2822)*T;
+  if (stab === 2) return (-0.000001*mm*mm + 0.01*mm - 0.0081)*T;
+  if (stab === 3) return (4.0795*Math.log(mm) - 20.657)*T;
+  if (stab === 4) return (((-0.000001*mm*mm + 0.0056*mm) + 1.2128)*T + (2.0905*Math.log(mm) - 9.0519)*T)/2;
+  return 0;
+}
+/* LVORI: rows by RH band, columns LDSI >40, <=40, <=30, <=25, <=16, <=12, <=10, <=8, <=6, <=4, <=2, <=1 */
+const LVORI_COLS = [40, 30, 25, 16, 12, 10, 8, 6, 4, 2, 1];
+const LVORI_ROWS = [
+  [97.0001, [4,4,4,5,5,7,8,8,9,9,10,10]], [95, [4,4,4,5,5,6,6,6,7,8,8,9]], [92, [4,4,4,5,5,5,6,6,6,6,7,8]], [89, [4,4,4,4,5,5,5,5,6,6,7,7]],
+  [86, [4,4,4,4,4,5,5,5,5,6,6,6]], [83, [4,4,4,4,4,4,4,4,5,5,5,6]], [80, [3,3,3,3,4,4,4,4,4,5,5,6]], [75, [3,3,3,3,4,4,4,4,4,4,4,4]],
+  [70, [3,3,3,3,3,3,3,3,3,3,3,4]], [65, [1,3,3,3,3,3,3,3,3,3,3,4]], [60, [1,1,2,2,2,2,3,3,3,3,3,3]], [55, [1,1,2,2,2,2,2,3,3,3,3,3]], [0, [1,1,2,2,2,2,2,2,2,2,2,2]]];
+function lvoriOf(rh, di){
+  const row = (rh > 97 ? LVORI_ROWS[0] : LVORI_ROWS.slice(1).find(r => rh >= r[0]) || LVORI_ROWS[LVORI_ROWS.length - 1])[1];
+  let k = 0; LVORI_COLS.forEach((c, j) => { if (di <= c) k = j + 1; });
+  return row[k];
+}
 
 /* mixing height (m AGL): parcel 0.5 K warmer than the 2 m air, lifted dry adiabatically */
 function mixHeight(sfcTF, ps, elev, lv){
@@ -422,6 +479,7 @@ async function fetchGuidance(){
     const T = g("temperature_2m"), Td = g("dew_point_2m"), RH = g("relative_humidity_2m"), VPD = g("vapour_pressure_deficit");
     const S = g("wind_speed_10m"), Gu = g("wind_gusts_10m"), Dr = g("wind_direction_10m"), PS = g("surface_pressure");
     const PoP = g("precipitation_probability"), CC = g("cloud_cover"), PR = g("precipitation");
+    const CL = g("cloud_cover_low"), CMd = g("cloud_cover_mid"), CHi = g("cloud_cover_high");
     const lvA = LEVELS.map(p => ({ p, t:g(`temperature_${p}hPa`), s:g(`wind_speed_${p}hPa`), d:g(`wind_direction_${p}hPa`), z:g(`geopotential_height_${p}hPa`) }));
     let hasSfc = false;
     for (let i = 0; i < n; i++){
@@ -442,6 +500,13 @@ async function fetchGuidance(){
         const tw = transport(mh, S[i], Dr[i], elev, lv);
         x.tw[i] = tw.s; x.twd[i] = tw.d;
         if (tw.s != null) x.vr[i] = mh*tw.s*KT2MS;
+      }
+      /* LDSI and LVORI, as on the burn page */
+      if (CC[i] != null && x.s20[i] != null && x.tw[i] != null && x.mh[i] != null){
+        const ceil = CL[i] != null && CL[i] >= 50 ? 3000 : CMd[i] != null && CMd[i] >= 50 ? 10000 : CHi[i] != null && CHi[i] >= 50 ? 25000 : 99999;
+        const tm = H.time[i], utc = Date.UTC(+tm.slice(0, 4), +tm.slice(5, 7) - 1, +tm.slice(8, 10), +tm.slice(11, 13), +tm.slice(14, 16)) - (js.utc_offset_seconds || 0)*1000;
+        const di = ldsiOf(CC[i], ceil, x.s20[i], x.tw[i], x.mh[i], utc);
+        if (di != null){ x.di[i] = Math.max(0, Math.round(di)); if (x.rh[i] != null) x.lvori[i] = lvoriOf(x.rh[i], x.di[i]); }
       }
     }
     return { id:m.id, n:m.n, x, has:hasSfc };
@@ -643,6 +708,7 @@ const OUT_ROWS = [
   { f:"tw",  s:"max", l:"Strongest transport wind" },
   { f:"twd", s:"atmax", of:"tw", l:"Transport direction at peak" },
   { f:"vr",  s:"max", l:"Best ventilation" },
+  { f:"lvori", s:"max", l:"Highest LVORI" },
 ];
 function stat(arr, idx, s){
   const v = idx.map(i => arr[i]).filter(x => x != null); if (!v.length) return null;
@@ -897,7 +963,7 @@ const HR_ROWS = [
   { g:"Prescription" }, { k:"rxin", l:"In prescription" }, { k:"rxc", l:"Model agreement", u:"%" },
   { g:"Temperature and moisture" }, { f:"sky" }, { f:"t" }, { f:"td" }, { f:"rh" }, { f:"vpd" }, { f:"pop" },
   { g:"20 ft winds" }, { f:"s20", l:"Sustained" }, { f:"g20", l:"Peak" }, { f:"dir", l:"Direction" },
-  { g:"Smoke and dispersion" }, { f:"mh" }, { f:"tw" }, { f:"twd", l:"Transport direction" }, { f:"vr" },
+  { g:"Smoke and dispersion" }, { f:"mh" }, { f:"tw" }, { f:"twd", l:"Transport direction" }, { f:"vr" }, { f:"di", l:"Dispersion (LDSI)" }, { f:"lvori" },
 ];
 let HR = null;
 function renderDays(days){
@@ -1014,6 +1080,8 @@ function discOutlook(o){
   if (wlo && whi) s.push(`20 ft winds run ${fmt("s20", wlo.v) === fmt("s20", whi.v) ? `near ${fmt("s20", whi.v)}` : `${fmt("s20", wlo.v)}–${fmt("s20", whi.v)}`} ${prefs.wu}, strongest on ${ds(whi.c)}${gh ? (gh.c === whi.c ? ` with gusts near ${fmt("g20", gh.v)} ${prefs.wu}` : `, with the highest gusts near ${fmt("g20", gh.v)} ${prefs.wu} on ${ds(gh.c)}`) : ""}.`);
   const mh = ext("mh", "max", true), ml = ext("mh", "max", false), tw = ext("tw", "max", true), vr = ext("vr", "max", true);
   if (mh) s.push(`Mixing heights peak near ${fmt("mh", mh.v)} ft on ${ds(mh.c)}${ml && ml.c !== mh.c ? ` and are lowest on ${ds(ml.c)} near ${fmt("mh", ml.v)} ft` : ""}${tw ? `; transport winds are strongest on ${ds(tw.c)}, ${compass(ov(tw.c, "twd", "atmax"))} ${fmt("tw", tw.v)} ${prefs.wu}` : ""}${vr ? `, and ventilation is best on ${ds(vr.c)} near ${fmt("vr", vr.v)} m²/s` : ""}.`);
+  const lvd = cols.filter(c => (ov(c, "lvori", "max") ?? 0) >= 4);
+  if (lvd.length) s.push(`LVORI reaches ${fmt("lvori", Math.max(...lvd.map(c => ov(c, "lvori", "max"))))} on ${list(lvd.map(ds))}: watch for smoke and fog reducing visibility on nearby roads.`);
   const wet = cols.filter(c => (ov(c, "pop", "max") ?? 0) >= 20);
   s.push(wet.length ? `Rain chances reach ${fmt("pop", Math.max(...wet.map(c => ov(c, "pop", "max"))))}% ${wet.length > 1 ? `from ${ds(wet[0])} to ${ds(wet[wet.length - 1])}` : `on ${ds(wet[0])}`}.` : "Little or no rain is expected during the burn windows.");
   const kb = cols.filter(c => c.kb && c.kb.v != null);
@@ -1042,6 +1110,7 @@ function discHourly(h){
   const mh = at("mh", true), tw = at("tw", true), vr = at("vr", true);
   if (mh) s.push(`Mixing heights rise to about ${fmt("mh", mh.v)} ft around ${t(mh.i)}${tw ? `, with transport winds up to ${compass(b.twd[tw.i])} ${fmt("tw", tw.v)} ${prefs.wu}` : ""}${vr ? `; ventilation peaks near ${fmt("vr", vr.v)} m²/s` : ""}.`);
   const mh0 = b.mh[w0]; if (mh0 != null && mh0 < 1000) s.push(`The mixed layer is shallow at the start (about ${fmt("mh", mh0)} ft), so smoke will stay low until it deepens.`);
+  const lv = at("lvori", true); if (lv && Math.round(lv.v) >= 4) s.push(`LVORI reaches ${fmt("lvori", lv.v)} around ${t(lv.i)}: watch for smoke and fog reducing visibility on nearby roads.`);
   const pp = at("pop", true); if (pp && pp.v >= 20) s.push(`Rain chances reach ${fmt("pop", pp.v)}%.`);
   const kq = h.col.kb; if (kq && kq.v != null) s.push(`KBDI is ${kq.obs ? "" : "forecast near "}${Math.round(kq.v)} (${kbdiCat(kq.v)}).`);
   if (prefs.rx.length){
@@ -1075,8 +1144,8 @@ function product(){
   const base = { pt, issued: issTxt, kbdi: kbTxt, kbdiSrc: kbTxt ? kbdiSrcText() : "", forecaster: (prefs.initials || "").toUpperCase(), winds: prefs.wu, disc: discText(), rx: rxSummary() };
   if (prefs.view === "outlook"){
     const cols = OUT.cols;
-    const head = ["Day","Burn window","Hrs in Rx","Best period","High °F","Min RH %","Max VPD kPa","20 ft wind","Mix ht ft","Transport","Vent m²/s","Rain %","KBDI"];
-    const wts = [0.88, 0.98, 0.58, 0.98, 0.5, 0.56, 0.6, 1.02, 0.66, 0.8, 0.72, 0.48, 0.52];
+    const head = ["Day","Burn window","Hrs in Rx","Best period","High °F","Min RH %","Max VPD kPa","20 ft wind","Mix ht ft","Transport","Vent m²/s","Rain %","KBDI","LVORI"];
+    const wts = [0.86, 0.96, 0.56, 0.96, 0.48, 0.54, 0.58, 1.0, 0.64, 0.78, 0.7, 0.46, 0.5, 0.52];
     const rows = cols.map(c => {
       const dc = (f, s) => dayCls(f, ov(c, f, s), s).c;
       const lo = ov(c, "s20", "min"), hi = ov(c, "s20", "max"), g = ov(c, "g20", "max");
@@ -1089,17 +1158,18 @@ function product(){
         { t: fmt("vpd", ov(c, "vpd", "max")), f: dc("vpd", "max") }, { t: wind, f: worst(dc("s20", "min"), dc("s20", "max"), dc("g20", "max")) },
         { t: fmt("mh", ov(c, "mh", "max")), f: dc("mh", "max") }, { t: ov(c, "tw", "max") == null ? "" : `${compass(ov(c, "twd", "atmax"))} ${fmt("tw", ov(c, "tw", "max"))}`, f: dc("tw", "max") },
         { t: fmt("vr", ov(c, "vr", "max")), f: dc("vr", "max") }, { t: fmt("pop", ov(c, "pop", "max")), f: dc("pop", "max") },
-        { t: c.kb && c.kb.v != null ? Math.round(c.kb.v) : "", b: !!(c.kb && c.kb.obs) } ] };
+        { t: c.kb && c.kb.v != null ? Math.round(c.kb.v) : "", b: !!(c.kb && c.kb.obs) },
+        { t: fmt("lvori", ov(c, "lvori", "max")), f: dc("lvori", "max") } ] };
     });
     const first = cols[0], last = cols[cols.length - 1];
     return { ...base, title:"Fire Weather Planning Forecast", kind:"outlook",
       valid: first ? `${dmed(first.day.date)} – ${dmed(last.day.date)}, daily burn windows` : "",
       head, wts, rows,
-      notes: `Each row covers that day's burn window, ${winText()}. Values are extremes inside the window from blended ${OUT.mem.map(m => m.n).join(", ")} guidance: high temperature, lowest RH, highest VPD, 20 ft sustained range with peak (G), highest mixing height, strongest transport wind, best ventilation and highest rain chance. KBDI: today's Florida Forest Service Brevard County value (bold), later days forecast with the Keetch-Byram equation from forecast highs and rain. Hrs in Rx: hours the blended forecast meets every criterion. Green meets the limit, amber misses it at some hours, red misses it at every hour. Min RH: green 54% or lower, amber 55-64%, red 65% or higher. VPD: vapor pressure deficit.` };
+      notes: `Each row covers that day's burn window, ${winText()}. Values are extremes inside the window from blended ${OUT.mem.map(m => m.n).join(", ")} guidance: high temperature, lowest RH, highest VPD, 20 ft sustained range with peak (G), highest mixing height, strongest transport wind, best ventilation and highest rain chance. KBDI: today's Florida Forest Service Brevard County value (bold), later days forecast with the Keetch-Byram equation from forecast highs and rain. LVORI: highest in the window, 1 (lowest) to 10 (highest) risk of low visibility in smoke or fog, from the MFL table using RH and the Lavdas dispersion index. Hrs in Rx: hours the blended forecast meets every criterion. Green meets the limit, amber misses it at some hours, red misses it at every hour. Min RH: green 54% or lower, amber 55-64%, red 65% or higher. VPD: vapor pressure deficit.` };
   }
   const { idx, blend, mem, day, col } = HR;
-  const head = ["Time","Sky","Temp °F","RH %","VPD kPa","20 ft wind","Mix ht ft","Transport","Vent m²/s","Rain %","In Rx"];
-  const wts = [0.75, 0.55, 0.65, 0.55, 0.65, 1.15, 0.8, 1.0, 0.85, 0.6, 0.55];
+  const head = ["Time","Sky","Temp °F","RH %","VPD kPa","20 ft wind","Mix ht ft","Transport","Vent m²/s","Rain %","LVORI","In Rx"];
+  const wts = [0.75, 0.55, 0.65, 0.55, 0.65, 1.15, 0.8, 1.0, 0.85, 0.6, 0.55, 0.55];
   const win = new Set(col.idx);
   const rows = idx.map(i => {
     const r = rxAt(i, mem, blend), cc = f => cellCls(f, blend[f][i]);
@@ -1107,13 +1177,13 @@ function product(){
       { t: hhmm(G.times[i]) + tzTag(), b:true }, { t: skyCat(blend.sky[i]) }, { t: fmt("t", blend.t[i]), f: cc("t") }, { t: fmt("rh", blend.rh[i]), f: cc("rh") },
       { t: fmt("vpd", blend.vpd[i]), f: cc("vpd") }, { t: windTxt(blend.dir[i], blend.s20[i], blend.g20[i]), f: worst(cc("s20"), cc("g20")) },
       { t: fmt("mh", blend.mh[i]), f: cc("mh") }, { t: blend.tw[i] == null ? "" : `${compass(blend.twd[i])} ${fmt("tw", blend.tw[i])}`, f: cc("tw") },
-      { t: fmt("vr", blend.vr[i]), f: cc("vr") }, { t: fmt("pop", blend.pop[i]), f: cc("pop") },
+      { t: fmt("vr", blend.vr[i]), f: cc("vr") }, { t: fmt("pop", blend.pop[i]), f: cc("pop") }, { t: fmt("lvori", blend.lvori[i]), f: cc("lvori") },
       { t: r.blend == null ? (prefs.rx.length ? "-" : "") : r.blend ? "Yes" : "No", f: r.blend == null ? "" : r.blend ? "go" : "bad", b:true } ] };
   });
   return { ...base, title:"Fire Weather Forecast", kind:"hourly", dayLabel: dayName(day.date, true),
     valid: `${dmed(day.date)} ${windowLabel(day)}${prefs.span === "day" ? " (full day shown)" : ""}`,
     head, wts, rows,
-    notes: `Hourly values from blended ${mem.map(m => m.n).join(", ")} guidance. 20 ft wind: direction, sustained speed and peak (G). Mixing height is above ground; transport wind is the mean wind through the mixed layer; ventilation is mixing height times transport wind. VPD: vapor pressure deficit. In Rx: the blended forecast meets every criterion.${prefs.span === "day" ? " Gray rows are outside the burn window." : ""}` };
+    notes: `Hourly values from blended ${mem.map(m => m.n).join(", ")} guidance. 20 ft wind: direction, sustained speed and peak (G). Mixing height is above ground; transport wind is the mean wind through the mixed layer; ventilation is mixing height times transport wind. VPD: vapor pressure deficit. LVORI: 1 (lowest) to 10 (highest) risk of low visibility in smoke or fog, from the MFL table using RH and the Lavdas dispersion index. In Rx: the blended forecast meets every criterion.${prefs.span === "day" ? " Gray rows are outside the burn window." : ""}` };
 }
 
 /* ---------- on-screen preview ---------- */
