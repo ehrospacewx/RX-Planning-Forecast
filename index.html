@@ -102,6 +102,8 @@ input[type=text],input[type=number],select{border:1px solid var(--rule);border-r
 input[type=number]{width:84px}
 .rxlist{display:grid;gap:6px;margin:6px 0 8px}
 .rxrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.rxrow .band{font-size:13px;padding:2px 7px;border-radius:5px;font-weight:600}
+.rxrow .band.go{background:var(--go);color:var(--goi)}.rxrow .band.warn{background:var(--warn);color:var(--warni)}.rxrow .band.bad{background:var(--bad);color:var(--badi)}
 .rxrow .unit{color:var(--mut);font-size:13px;min-width:36px}
 .rxrow button{border:0;background:transparent;color:var(--mut);font-size:18px;cursor:pointer;line-height:1;padding:0 4px}
 .models{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:14px}
@@ -319,6 +321,7 @@ const RX_EXAMPLE = [
   { f:"vpd", op:"<=", v:2.0 },
   { f:"s20", op:">=", v:4/KT2MPH }, { f:"s20", op:"<=", v:15/KT2MPH },
   { f:"mh",  op:">=", v:1700 }, { f:"tw", op:">=", v:9/KT2MPH },
+  { f:"lvori", op:"band", v:4, v2:6 },
 ];
 
 const LS_KEY = "burnoutlook:v1";
@@ -330,6 +333,8 @@ const prefs = Object.assign({
 }, load());
 /* the default burn window became sunrise to sunset: reset the old +1 h / -1 h offsets once */
 if (prefs.winVer !== 2){ prefs.wA = 0; prefs.wB = 0; prefs.winVer = 2; }
+/* LVORI joined the prescription: add it once to saved prescriptions that don't have one */
+if (!prefs.lvoriRx){ if (!prefs.rx.some(c => c.f === "lvori")) prefs.rx.push({ f:"lvori", op:"band", v:4, v2:6 }); prefs.lvoriRx = 1; }
 const save = () => { try { localStorage.setItem(LS_KEY, JSON.stringify(prefs)); } catch (e) {} };
 
 const $ = id => document.getElementById(id);
@@ -531,7 +536,9 @@ function blendAt(f, i, mem){
   let s = 0, k = 0; for (const m of mem){ const v = m.x[f][i]; if (v != null){ s += v; k++; } }
   return k ? s/k : null;
 }
-const passes = (v, c) => v != null && (c.op === ">=" ? v >= c.v : c.op === ">" ? v > c.v : c.op === "<=" ? v <= c.v : v < c.v);
+/* LVORI-style bands: green at or below v, yellow up to v2, red above; only green is in prescription */
+const bandOf = (v, c) => { const r = Math.round(v); return r <= c.v ? "go" : r <= c.v2 ? "warn" : "bad"; };
+const passes = (v, c) => v != null && (c.op === "band" ? Math.round(v) <= c.v : c.op === ">=" ? v >= c.v : c.op === ">" ? v > c.v : c.op === "<=" ? v <= c.v : v < c.v);
 function rxAt(i, mem, blend){
   const crit = prefs.rx.filter(c => F[c.f]);
   if (!crit.length) return { blend:null, chance:null };
@@ -649,11 +656,14 @@ function fmt(f, v){
 const dispV = (f, v) => F[f].wind ? v*wf() : v;
 const opTxt = op => ({ ">=":"≥", ">":">", "<=":"≤", "<":"<" })[op] || op;
 const numTxt = (f, v) => { const d = F[f]; return String(+v.toFixed(d.dec > 0 ? d.dec : 1)); };
-function critText(c){ const d = F[c.f]; return `${d.short || d.l} ${opTxt(c.op)} ${numTxt(c.f, dispV(c.f, c.v))}${d.wind ? " " + prefs.wu : d.u === "%" ? "%" : d.u ? " " + d.u.replace(" AGL", "") : ""}`; }
+function critText(c){ const d = F[c.f];
+  if (c.op === "band") return `${d.short || d.l} ≤ ${c.v} (${c.v + 1 === c.v2 ? c.v2 : `${c.v + 1}–${c.v2}`} caution, ${c.v2 + 1}+ out)`;
+  return `${d.short || d.l} ${opTxt(c.op)} ${numTxt(c.f, dispV(c.f, c.v))}${d.wind ? " " + prefs.wu : d.u === "%" ? "%" : d.u ? " " + d.u.replace(" AGL", "") : ""}`; }
 /* hourly cell class against the prescription */
 function cellCls(f, v){
   const cs = prefs.rx.filter(c => c.f === f); if (!cs.length || v == null) return "";
-  return cs.every(c => passes(v, c)) ? "go" : "bad";
+  /* a band criterion gives green, yellow or red; any other limit missed is red */
+  return worst(...cs.map(c => c.op === "band" ? bandOf(v, c) : passes(v, c) ? "go" : "bad"));
 }
 /* daily extreme cell: a "worst" extreme past a limit = at times (amber); a "best" extreme past a limit = never met (red) */
 /* lowest RH in the burn window: fixed bands (green 54% or lower, yellow 55-64%, red 65% or higher),
@@ -667,11 +677,19 @@ function rhMinCls(v){
   if (lo){ if (c === "go") c = "warn"; t += `; below the prescription minimum (${critText(lo)})`; }
   return { c, t };
 }
+const d0 = c => F[c.f].short || F[c.f].l;
 function dayCls(f, v, kind){
   if (f === "rh" && kind === "min" && v != null) return rhMinCls(v);
   const cs = prefs.rx.filter(c => c.f === f); if (!cs.length || v == null) return { c:"", t:"" };
   let cls = "go", tip = [];
   for (const c of cs){
+    if (c.op === "band"){
+      /* the day's highest value sets the color; the lowest only matters if even that is out */
+      const b = bandOf(v, c), r = Math.round(v);
+      if (kind === "max"){ if (b !== "go"){ cls = worst(cls, b); tip.push(`${d0(c)} reaches ${r} (${b === "warn" ? "caution" : "out of prescription"})`); } }
+      else if (b !== "go"){ cls = "bad"; tip.push(`${d0(c)} never at or below ${c.v}`); }
+      continue;
+    }
     if (passes(v, c)) continue;
     const lower = c.op === ">=" || c.op === ">";
     const best = (lower && kind === "max") || (!lower && kind === "min");
@@ -1048,7 +1066,7 @@ function dmed(date){ const d = new Date(date + "T12:00:00Z"); return d.toLocaleD
 const list = a => a.length < 2 ? (a[0] || "") : a.length === 2 ? `${a[0]} and ${a[1]}` : `${a.slice(0, -1).join(", ")} and ${a[a.length - 1]}`;
 const unitSfx = f => F[f].wind ? " " + prefs.wu : F[f].u === "%" ? "%" : F[f].u === "°F" ? "°F" : F[f].u ? " " + F[f].u.replace(" AGL", "") : "";
 const valTxt = (f, v) => v == null ? "" : fmt(f, v) + unitSfx(f);
-const critPhrase = c => `${RXW[c.f] || F[c.f].l} ${c.op.startsWith(">") ? "below" : "above"} ${numTxt(c.f, dispV(c.f, c.v))}${unitSfx(c.f)}`;
+const critPhrase = c => c.op === "band" ? `${RXW[c.f] || F[c.f].short || F[c.f].l} above ${c.v}` : `${RXW[c.f] || F[c.f].l} ${c.op.startsWith(">") ? "below" : "above"} ${numTxt(c.f, dispV(c.f, c.v))}${unitSfx(c.f)}`;
 const runTxt = run => run ? `${hhmm(run.a)}–${endLabel(run.b)}${tzTag()}` : "";
 const windTxt = (d, s, g) => s == null ? "" : `${d == null ? "" : compass(d) + " "}${fmt("s20", s)}${g != null && Math.round(g*wf()) > Math.round(s*wf()) + 2 ? "G" + fmt("g20", g) : ""}`;
 const tzWord = () => prefs.tz === "Z" ? "UTC" : "local";
@@ -1316,6 +1334,12 @@ function renderRx(){
   const opts = Object.keys(F).filter(k => F[k].rx);
   $("rxlist").innerHTML = prefs.rx.map((c, j) => {
     const d = F[c.f] || {};
+    if (c.op === "band") return `<div class="rxrow" data-j="${j}">
+      <select data-k="f">${opts.map(k => `<option value="${k}"${k === c.f ? " selected" : ""}>${esc(F[k].l)}</option>`).join("")}</select>
+      <span class="band go">green ≤</span><input type="number" data-k="v" value="${c.v}" step="1" min="1" max="10" style="width:56px">
+      <span class="band warn">yellow ≤</span><input type="number" data-k="v2" value="${c.v2}" step="1" min="1" max="10" style="width:56px">
+      <span class="band bad">red above</span>
+      <button type="button" data-k="x" title="Remove" aria-label="Remove criterion">×</button></div>`;
     return `<div class="rxrow" data-j="${j}">
       <select data-k="f">${opts.map(k => `<option value="${k}"${k === c.f ? " selected" : ""}>${esc(F[k].l)}</option>`).join("")}</select>
       <select data-k="op">${[">=","<="].map(o => `<option value="${o}"${o === c.op ? " selected" : ""}>${opTxt(o)}</option>`).join("")}</select>
@@ -1325,7 +1349,16 @@ function renderRx(){
   }).join("") || `<p class="mut small" style="margin:0">No criteria. The outlook still shows the daily extremes.</p>`;
   $("rxlist").querySelectorAll(".rxrow").forEach(row => {
     const j = +row.dataset.j, c = prefs.rx[j];
-    row.querySelector('[data-k="f"]').onchange = e => { const v = dispV(c.f, c.v); c.f = e.target.value; c.v = F[c.f].wind ? v/wf() : v; changed(true); };
+    if (c.op === "band"){
+      /* switching away from LVORI turns it into a plain "at or below" limit */
+      row.querySelector('[data-k="f"]').onchange = e => { c.f = e.target.value; if (c.f !== "lvori"){ c.op = "<="; delete c.v2; if (F[c.f].wind) c.v = c.v/wf(); } changed(true); };
+      const clampI = x => Math.max(1, Math.min(10, Math.round(x)));
+      row.querySelector('[data-k="v"]').onchange = e => { const v = parseFloat(e.target.value); if (!isFinite(v)) return; c.v = clampI(v); if (c.v2 < c.v) c.v2 = c.v; changed(true); };
+      row.querySelector('[data-k="v2"]').onchange = e => { const v = parseFloat(e.target.value); if (!isFinite(v)) return; c.v2 = clampI(v); if (c.v2 < c.v) c.v = c.v2; changed(true); };
+      row.querySelector('[data-k="x"]').onclick = () => { prefs.rx.splice(j, 1); changed(true); };
+      return;
+    }
+    row.querySelector('[data-k="f"]').onchange = e => { const v = dispV(c.f, c.v); c.f = e.target.value; if (c.f === "lvori"){ c.op = "band"; c.v = 4; c.v2 = 6; changed(true); return; } c.v = F[c.f].wind ? v/wf() : v; changed(true); };
     row.querySelector('[data-k="op"]').onchange = e => { c.op = e.target.value; changed(); };
     row.querySelector('[data-k="v"]').onchange = e => { const v = parseFloat(e.target.value); if (!isFinite(v)) return; c.v = F[c.f].wind ? v/wf() : v; changed(); };
     row.querySelector('[data-k="x"]').onclick = () => { prefs.rx.splice(j, 1); changed(true); };
