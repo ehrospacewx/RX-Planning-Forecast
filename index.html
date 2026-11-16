@@ -80,6 +80,14 @@ td.rxv{font-weight:700}
 .rangebar input.bad{border-color:#c0392b;box-shadow:0 0 0 2px rgba(192,57,43,.25)}
 .rangebar .fmt{font-size:12.5px;color:var(--mut)}
 .rangebar .fmt b{color:var(--ink);font-weight:600}
+.cellin{width:78px;max-width:100%;text-align:center;font:inherit;font-size:14px;padding:3px 4px;border:1px dashed var(--acc);border-radius:5px;background:var(--panel);color:var(--ink)}
+.cellin:focus{outline:2px solid var(--acc);border-style:solid}
+table.mx td.edited{box-shadow:inset 3px 0 0 var(--acc)}
+table.mx td.edited .rg{color:var(--acc);font-style:italic}
+.panel.editing{outline:2px solid var(--acc);outline-offset:2px}
+.editnote{margin:0 0 10px;padding:7px 12px;border-radius:8px;background:var(--zebra);border:1px dashed var(--acc);font-size:13.5px}
+.btn.arm{background:var(--warn);color:var(--warni);border-color:var(--warni);font-weight:700}
+.btn[aria-pressed="true"]{background:var(--acc);border-color:var(--acc);color:#fff}
 .spotbar{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline;padding:8px 12px;border:1px solid var(--rule);border-radius:8px;margin:0 0 10px;font-size:14px}
 .spotbar.on{background:var(--warn);border-color:var(--warni);color:var(--warni)}
 .spotbar.on a{color:inherit;font-size:15px}
@@ -183,10 +191,13 @@ input[type=number]{width:84px}
         <button type="button" data-s="window">Burn window</button>
         <button type="button" data-s="day">Full day</button>
       </span>
+      <button class="btn noprint" id="editBtn" type="button" aria-pressed="false" hidden>Edit forecast</button>
+      <button class="btn noprint" id="resetEd" type="button" hidden disabled>Return fields to model values</button>
       <span class="spacer" style="flex:1"></span>
       <button class="btn" id="csvBtn">Download CSV</button>
       <button class="btn primary" id="pdfBtn2">Download PDF</button>
     </div>
+    <div class="editnote noprint" id="editNote" hidden><b>Editing the planning forecast.</b> Type over any value and press Enter or Tab; Esc cancels a cell. Edits save in this browser and carry into the colors, KBDI, discussion and PDF. Edited cells show the model value underneath. Click <b>Done editing</b> to lock the table again.</div>
     <div class="rangebar noprint" id="rangebar" hidden>
       <label>From <input type="text" id="rFrom" placeholder="14 Nov 2026" autocomplete="off" spellcheck="false" aria-describedby="rFmt"></label>
       <label>To <input type="text" id="rTo" placeholder="17 Nov 2026" autocomplete="off" spellcheck="false" aria-describedby="rFmt"></label>
@@ -312,7 +323,7 @@ const load = () => { try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}
 const prefs = Object.assign({
   view:"outlook", span:"window", wu:"mph", tz:"L", site:"custom",
   custom:{ name:"Burn unit", lat:28.66, lon:-80.70 }, wA:0, wB:0,
-  rx: RX_EXAMPLE.map(c => ({ ...c })), models: MODELS.map(m => m.id), range:{ n:7 }, day:0, initials:"", disc:{}, kbdiManual:"", annRain:50,
+  rx: RX_EXAMPLE.map(c => ({ ...c })), models: MODELS.map(m => m.id), range:{ n:7 }, edits:{}, day:0, initials:"", disc:{}, kbdiManual:"", annRain:50,
 }, load());
 /* the default burn window became sunrise to sunset: reset the old +1 h / -1 h offsets once */
 if (prefs.winVer !== 2){ prefs.wA = 0; prefs.wB = 0; prefs.winVer = 2; }
@@ -722,11 +733,17 @@ function kbdiFor(dates, mem){
   const st = kbdiStart(); if (!st || !dates.length) return null;
   const today = nowLocal().slice(0, 10), last = dates[dates.length - 1], steps = [];
   for (let d = addDays(today, 1); d <= last; d = addDays(d, 1)) steps.push(d);
-  const run = wx => { const out = { [today]: st.value }; let q = st.value; const s = { cum:0, used:0 }; for (const d of steps){ const w = wx(d); q = kbdiStep(q, w.t, w.r, s); out[d] = q; } return out; };
-  const per = mem.map(m => run(d => dayWx(m.x, d)));
-  const bl = run(d => { const ws = mem.map(m => dayWx(m.x, d)); return { t: meanOf(ws.map(w => w.t)), r: meanOf(ws.map(w => w.r)) }; });
+  /* edits: a KBDI typed for a day restarts the chain from that value; an edited rain total replaces the model rain */
+  const run = (wx, ed) => {
+    let q = ed && getEd(today, "kbdi") != null ? getEd(today, "kbdi") : st.value; const out = { [today]: q }, s = { cum:0, used:0 };
+    for (const d of steps){ const w = wx(d); if (ed && getEd(d, "rain") != null) w.r = getEd(d, "rain"); q = kbdiStep(q, w.t, w.r, s); if (ed && getEd(d, "kbdi") != null) q = getEd(d, "kbdi"); out[d] = q; }
+    return out;
+  };
+  const per = mem.map(m => run(d => dayWx(m.x, d), true));
+  const blWx = d => { const ws = mem.map(m => dayWx(m.x, d)); return { t: meanOf(ws.map(w => w.t)), r: meanOf(ws.map(w => w.r)) }; };
+  const bl = run(blWx, true), blModel = run(blWx, false);
   const res = {};
-  for (const d of dates){ const vs = per.map(p => p[d]).filter(v => v != null); res[d] = { v: bl[d], lo: vs.length ? Math.min(...vs) : null, hi: vs.length ? Math.max(...vs) : null, obs: d === today, src: st.src }; }
+  for (const d of dates){ const vs = per.map(p => p[d]).filter(v => v != null); res[d] = { v: bl[d], model: blModel[d], edited: getEd(d, "kbdi") != null, lo: vs.length ? Math.min(...vs) : null, hi: vs.length ? Math.max(...vs) : null, obs: d === today, src: st.src }; }
   return res;
 }
 function kbdiSrcText(){
@@ -739,6 +756,46 @@ function renderKBDINote(){
   el.textContent = KBDI.state === "ok" ? `Latest FFS value: ${KBDI.county} County ${KBDI.value} (range ${KBDI.min}–${KBDI.max}) for ${dmed(KBDI.date)}.` : KBDI.state === "loading" ? "Looking for the FFS value…" : "Couldn't reach the FFS KBDI report. Enter today's KBDI to forecast it.";
 }
 
+/* ============================================================
+   Forecaster edits to the planning table
+   Stored per point and date in the units the page keeps internally (winds in kt),
+   so switching mph/kt doesn't change an edit.
+   ============================================================ */
+let EDIT = false, resetArmed = 0;
+const rowId = r => r.k || `${r.f}:${r.s}`;
+const ekey = (date, id) => `${prefs.site}|${date}|${id}`;
+function getEd(date, id){ const v = (prefs.edits || {})[ekey(date, id)]; return v === undefined ? null : v; }
+const siteEdits = () => Object.keys(prefs.edits || {}).filter(k => k.startsWith(prefs.site + "|"));
+function pruneEdits(){ const today = nowLocal().slice(0, 10); for (const k of Object.keys(prefs.edits || {})) if (k.split("|")[1] < today) delete prefs.edits[k]; }
+/* typed text to a stored value: null clears the edit, undefined means it couldn't be read */
+function parseEdit(r, txt){
+  const s = String(txt).trim(); if (!s || s === "—" || s === "-") return null;
+  if (r.k === "rxh" || r.k === "rxp" || r.k === "rxc") return s.slice(0, 24);
+  if (r.f && F[r.f].dir){ const i = COMPASS.indexOf(s.toUpperCase()); if (i >= 0) return i*22.5; const n = parseFloat(s); return isFinite(n) ? ((n % 360) + 360) % 360 : undefined; }
+  const n = parseFloat(s.replace(/[,%]/g, "")); if (!isFinite(n)) return undefined;
+  if (r.k === "kbdi") return Math.max(0, Math.min(800, n));
+  if (r.k === "rain") return Math.max(0, n);
+  return F[r.f].wind ? n/wf() : n;
+}
+function commitEdit(inp){
+  const r = OUT_ROWS[+inp.dataset.j], key = ekey(inp.dataset.date, rowId(r)), v = parseEdit(r, inp.value);
+  if (v === undefined){ toast(`Couldn't read "${inp.value}". Enter a number${r.f && F[r.f].dir ? " or a direction like NNE" : ""}.`); inp.value = inp.dataset.cur; return false; }
+  prefs.edits = prefs.edits || {};
+  if (v === null || inp.value.trim() === inp.dataset.model) delete prefs.edits[key]; else prefs.edits[key] = v;
+  save(); return true;
+}
+function renderEditBar(){
+  const on = prefs.view === "outlook", n = siteEdits().length;
+  $("editBtn").hidden = !on; $("resetEd").hidden = !on;
+  if (!on && EDIT) EDIT = false;
+  $("editBtn").setAttribute("aria-pressed", String(EDIT)); $("editBtn").textContent = EDIT ? "Done editing" : "Edit forecast";
+  $("editNote").hidden = !(on && EDIT);
+  const panel = $("mx").closest ? $("mx").closest(".panel") : null; if (panel) panel.classList.toggle("editing", on && EDIT);
+  const rb = $("resetEd"); rb.disabled = !n;
+  if (resetArmed && Date.now() < resetArmed && n){ rb.classList.add("arm"); rb.textContent = `Click again to clear ${n} edit${n > 1 ? "s" : ""}`; }
+  else { resetArmed = 0; rb.classList.remove("arm"); rb.textContent = n ? `Return fields to model values (${n})` : "Return fields to model values"; }
+}
+
 function buildOutlook(){
   const mem = active(), blend = blendAll(mem), days = outlookDays(), KB = kbdiFor(days.map(d => d.date), mem);
   const cols = days.map(day => {
@@ -748,17 +805,22 @@ function buildOutlook(){
     const nIn = okH.filter(Boolean).length, known = rx.filter(r => r.blend != null).length;
     const run = bestRun(idx, okH);
     const chances = rx.map(r => r.chance).filter(x => x != null);
-    const vals = {}, spread = {};
+    const vals = {}, spread = {}, model = {}, edited = {};
     OUT_ROWS.forEach((r, j) => {
       if (!r.f) return;
-      vals[j] = cellStat(r, idx, blend);
+      vals[j] = model[j] = cellStat(r, idx, blend);
       if (!F[r.f].dir){
         const per = mem.map(m => cellStat(r, idx, m.x)).filter(x => x != null);
         if (per.length > 1) spread[j] = [Math.min(...per), Math.max(...per)];
       }
+      const o = getEd(day.date, rowId(r)); if (o != null){ vals[j] = o; edited[j] = true; }
     });
-    const verdict = !prefs.rx.length || !known ? "" : nIn >= Math.max(3, idx.length/3) ? "go" : nIn > 0 ? "marg" : "no";
-    return { day, idx, nIn, known, run, peak: chances.length ? Math.max(...chances) : null, vals, spread, verdict, lim: limitsOf(idx, blend), kb: KB ? KB[day.date] : null, rain: rainStat(day.date, mem) };
+    const tx = { rxh: getEd(day.date, "rxh"), rxp: getEd(day.date, "rxp"), rxc: getEd(day.date, "rxc") };
+    /* an edited "hours in prescription" that starts with a number sets the day's color */
+    const nInV = tx.rxh != null && /^\s*\d+/.test(tx.rxh) ? parseInt(tx.rxh, 10) : nIn;
+    let rain = rainStat(day.date, mem); const ro = getEd(day.date, "rain"); if (ro != null) rain = { v:ro, lo:ro, hi:ro, edited:true, model:rain };
+    const verdict = !prefs.rx.length || (!known && tx.rxh == null) ? "" : nInV >= Math.max(3, idx.length/3) ? "go" : nInV > 0 ? "marg" : "no";
+    return { day, idx, nIn, known, run, peak: chances.length ? Math.max(...chances) : null, vals, model, edited, tx, spread, verdict, lim: limitsOf(idx, blend), kb: KB ? KB[day.date] : null, rain };
   });
   return { cols, mem };
 }
@@ -772,24 +834,59 @@ function renderOutlook(){
     const unit = r.f ? (F[r.f].dir ? "" : unitOf(r.f)) : r.u || "";
     h += `<tr><th scope="row">${esc(r.l)}${unit ? `<span class="u">${esc(unit)}</span>` : ""}</th>`;
     for (const c of cols){
-      if (r.k === "rxh"){ const cls = c.verdict === "go" ? "go" : c.verdict === "marg" ? "warn" : c.verdict === "no" ? "bad" : ""; h += `<td class="rxv ${cls}">${prefs.rx.length ? (c.known ? `${c.nIn} of ${c.idx.length} h` : "—") : "no Rx"}</td>`; continue; }
-      if (r.k === "rxp"){ h += `<td>${c.run ? `${hhmm(c.run.a)}–${endLabel(c.run.b)}${tzTag()}` : prefs.rx.length ? "none" : ""}</td>`; continue; }
-      if (r.k === "rxc"){ h += `<td>${c.peak == null ? "" : c.peak}</td>`; continue; }
-      if (r.k === "kbdi"){
-        const k = c.kb; if (!k || k.v == null){ h += `<td title="Enter today's KBDI under Burn unit and window">—</td>`; continue; }
-        const sub = k.obs ? (k.src === "manual" ? "entered" : "FFS") : (Math.round(k.lo) !== Math.round(k.hi) ? `${Math.round(k.lo)}–${Math.round(k.hi)}` : "");
-        h += `<td title="${k.obs ? "Today's value" : "Forecast"}: ${kbdiCat(k.v)}">${Math.round(k.v)}${sub ? `<span class="rg">${sub}</span>` : ""}</td>`; continue;
+      let cls = "", title = "", disp = "", sub = "", modelTxt = "", isEd = false, canEdit = true;
+      if (r.k === "rxh"){
+        cls = "rxv " + (c.verdict === "go" ? "go" : c.verdict === "marg" ? "warn" : c.verdict === "no" ? "bad" : "");
+        modelTxt = prefs.rx.length ? (c.known ? `${c.nIn} of ${c.idx.length} h` : "—") : "no Rx";
+        isEd = c.tx.rxh != null; disp = isEd ? c.tx.rxh : modelTxt;
+      } else if (r.k === "rxp"){
+        modelTxt = c.run ? runTxt(c.run) : prefs.rx.length ? "none" : ""; isEd = c.tx.rxp != null; disp = isEd ? c.tx.rxp : modelTxt;
+      } else if (r.k === "rxc"){
+        modelTxt = c.peak == null ? "" : String(c.peak); isEd = c.tx.rxc != null; disp = isEd ? c.tx.rxc : modelTxt;
+      } else if (r.k === "kbdi"){
+        const k = c.kb;
+        if (!k || k.v == null){ disp = "—"; title = "Enter today's KBDI under Burn unit and window"; canEdit = false; }
+        else {
+          disp = String(Math.round(k.v)); modelTxt = String(Math.round(k.model != null ? k.model : k.v)); isEd = k.edited;
+          sub = k.obs ? (k.src === "manual" ? "entered" : "FFS") : (Math.round(k.lo) !== Math.round(k.hi) ? `${Math.round(k.lo)}–${Math.round(k.hi)}` : "");
+          title = `${k.obs ? "Today's value" : "Forecast"}: ${kbdiCat(k.v)}`;
+        }
+      } else if (r.k === "rain"){
+        const x = c.rain; disp = x ? x.v.toFixed(2) : "—"; isEd = !!(x && x.edited);
+        modelTxt = x ? (x.model ? x.model.v.toFixed(2) : x.v.toFixed(2)) : "";
+        sub = x && x.lo.toFixed(2) !== x.hi.toFixed(2) ? `${x.lo.toFixed(2)}–${x.hi.toFixed(2)}` : "";
+      } else {
+        const v = c.vals[j], sp = c.spread[j];
+        const dc = r.s === "max" || r.s === "min" ? dayCls(r.f, v, r.s) : { c:"", t:"" };
+        cls = dc.c; title = dc.t; disp = fmt(r.f, v) || "—"; modelTxt = fmt(r.f, c.model[j]) || ""; isEd = !!c.edited[j];
+        sub = sp && fmt(r.f, sp[0]) !== fmt(r.f, sp[1]) ? `${fmt(r.f, sp[0])}–${fmt(r.f, sp[1])}` : "";
       }
-      if (r.k === "rain"){ const x = c.rain; h += `<td>${x ? x.v.toFixed(2) : "—"}${x && x.lo.toFixed(2) !== x.hi.toFixed(2) ? `<span class="rg">${x.lo.toFixed(2)}–${x.hi.toFixed(2)}</span>` : ""}</td>`; continue; }
-      const v = c.vals[j], sp = c.spread[j];
-      const dc = r.s === "max" || r.s === "min" ? dayCls(r.f, v, r.s) : { c:"", t:"" };
-      const rg = sp && fmt(r.f, sp[0]) !== fmt(r.f, sp[1]) ? `<span class="rg">${fmt(r.f, sp[0])}–${fmt(r.f, sp[1])}</span>` : "";
-      h += `<td class="${dc.c}"${dc.t ? ` title="${esc(dc.t)}"` : ""}>${fmt(r.f, v) || "—"}${rg}</td>`;
+      if (isEd){ cls += " edited"; sub = `model ${modelTxt || "—"}`; title = (title ? title + ". " : "") + `Edited; model value ${modelTxt || "none"}`; }
+      const val = disp === "—" ? "" : disp;
+      const body = EDIT && canEdit
+        ? `<input class="cellin" type="text" data-j="${j}" data-date="${c.day.date}" data-model="${esc(modelTxt)}" data-cur="${esc(val)}" value="${esc(val)}" aria-label="${esc(r.l)}, ${esc(dshort(c.day.date))}">`
+        : esc(disp);
+      h += `<td class="${cls.trim()}"${title ? ` title="${esc(title)}"` : ""}>${body}${sub ? `<span class="rg">${esc(sub)}</span>` : ""}</td>`;
     }
     h += "</tr>";
   });
   $("mx").innerHTML = h + "</tbody>";
   $("mx").querySelectorAll("[data-day]").forEach(a => a.onclick = ev => { ev.preventDefault(); prefs.day = +a.dataset.day; prefs.view = "hourly"; save(); render(); });
+  /* edit boxes: Enter or Tab saves, Esc cancels; focus moves on to the next box after the table redraws */
+  $("mx").querySelectorAll("input.cellin").forEach(inp => {
+    inp.addEventListener("keydown", e => {
+      if (e.key === "Enter"){ e.preventDefault(); inp.blur(); }
+      else if (e.key === "Escape"){ inp.value = inp.dataset.cur; inp.blur(); }
+    });
+    inp.addEventListener("change", () => {
+      if (!commitEdit(inp)) return;
+      setTimeout(() => {
+        const a = document.activeElement, keep = a && a.classList && a.classList.contains("cellin") ? [a.dataset.j, a.dataset.date] : null;
+        render();
+        if (keep){ const el = $("mx").querySelector(`input.cellin[data-j="${keep[0]}"][data-date="${keep[1]}"]`); if (el){ el.focus(); el.select(); } }
+      }, 0);
+    });
+  });
   $("legend").innerHTML = prefs.rx.length ? `<span class="lg">Meets the prescription limit</span><span class="lw">Limit missed at some hours</span><span class="lb">Limit missed at every hour</span><span>Lowest RH: green 54% or lower, yellow 55–64%, red 65% or higher</span><span>Gray numbers: range of that value across the models</span>` : `<span>Add prescription criteria below to color the outlook.</span>`;
 }
 
@@ -987,7 +1084,7 @@ function product(){
       const v = c.verdict === "go" ? "go" : c.verdict === "marg" ? "warn" : c.verdict === "no" ? "bad" : "";
       return { cells: [
         { t: dmed(c.day.date), b:true }, { t: windowLabel(c.day) },
-        { t: prefs.rx.length ? (c.known ? `${c.nIn} of ${c.idx.length}` : "-") : "", f: v, b:true }, { t: c.run ? runTxt(c.run) : prefs.rx.length ? "none" : "" },
+        { t: c.tx.rxh != null ? c.tx.rxh : prefs.rx.length ? (c.known ? `${c.nIn} of ${c.idx.length}` : "-") : "", f: v, b:true }, { t: c.tx.rxp != null ? c.tx.rxp : c.run ? runTxt(c.run) : prefs.rx.length ? "none" : "" },
         { t: fmt("t", ov(c, "t", "max")), f: dc("t", "max") }, { t: fmt("rh", ov(c, "rh", "min")), f: dc("rh", "min") },
         { t: fmt("vpd", ov(c, "vpd", "max")), f: dc("vpd", "max") }, { t: wind, f: worst(dc("s20", "min"), dc("s20", "max"), dc("g20", "max")) },
         { t: fmt("mh", ov(c, "mh", "max")), f: dc("mh", "max") }, { t: ov(c, "tw", "max") == null ? "" : `${compass(ov(c, "twd", "atmax"))} ${fmt("tw", ov(c, "tw", "max"))}`, f: dc("tw", "max") },
@@ -1243,7 +1340,7 @@ function renderSpot(){
 function render(){
   seg("viewSel", "data-v", prefs.view); seg("spanSel", "data-s", prefs.span); seg("wuSel", "data-u", prefs.wu); seg("tzSel", "data-tz", prefs.tz);
   $("spanSel").hidden = prefs.view !== "hourly"; $("days").hidden = prefs.view !== "hourly";
-  renderSpot(); renderRange();
+  renderSpot(); renderRange(); renderEditBar();
   if (!G){ return; }
   const issued = new Date(G.fetched);
   $("issued").textContent = `Guidance fetched ${issued.toLocaleString("en-US", { timeZone:TZ, month:"short", day:"numeric", hour:"2-digit", minute:"2-digit", hourCycle:"h23" })} ET`;
@@ -1261,6 +1358,14 @@ function init(){
     prefs.custom = { name: $("cName").value.trim() || "Burn unit", lat, lon }; prefs.site = "custom"; save(); renderSites(); fetchGuidance();
   };
   $("cName").onchange = () => { prefs.custom.name = $("cName").value.trim() || "Burn unit"; save(); renderSites(); if (G && prefs.site === "custom"){ G.pt.name = prefs.custom.name; render(); } };
+  $("editBtn").onclick = () => { EDIT = !EDIT; resetArmed = 0; render(); if (EDIT){ const f = $("mx").querySelector("input.cellin"); if (f) f.focus(); } };
+  $("resetEd").onclick = () => {
+    if (!siteEdits().length) return;
+    if (resetArmed && Date.now() < resetArmed){
+      for (const k of siteEdits()) delete prefs.edits[k];
+      resetArmed = 0; save(); render(); toast("All fields are back to the model values");
+    } else { resetArmed = Date.now() + 5000; renderEditBar(); setTimeout(() => { if (resetArmed && Date.now() >= resetArmed){ resetArmed = 0; renderEditBar(); } }, 5100); }
+  };
   $("rApply").onclick = applyRange;
   ["rFrom", "rTo"].forEach(id => $(id).addEventListener("keydown", e => { if (e.key === "Enter"){ e.preventDefault(); applyRange(); } }));
   $("rQuick").onclick = e => { const b = e.target.closest("[data-n]"); if (!b) return; prefs.range = { n:+b.dataset.n }; prefs.day = 0; save(); ["rFrom", "rTo"].forEach(id => $(id).blur()); render(); };
@@ -1299,11 +1404,12 @@ function init(){
     mark();
   });
   mark();
+  pruneEdits(); save();
   /* the outlook is always the first view on opening */
   prefs.view = "outlook";
   renderSites(); renderRx(); renderModels(); render(); fetchGuidance(); checkSpots(); loadKBDI();
   /* refresh every 30 minutes while the page is open */
-  setInterval(() => { if (!document.hidden){ fetchGuidance(); checkSpots(); loadKBDI(); } }, 30*60*1000);
+  setInterval(() => { if (!document.hidden && !EDIT){ fetchGuidance(); checkSpots(); loadKBDI(); } }, 30*60*1000);
 }
 init();
 </script>
