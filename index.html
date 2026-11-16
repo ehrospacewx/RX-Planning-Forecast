@@ -239,12 +239,12 @@ input[type=number]{width:84px}
       <p class="mut small" id="kbdiNote" style="margin:2px 0 6px"></p>
       <p class="mut small" style="margin:6px 0 0">Leave KBDI blank to use the Florida Forest Service value. Use negative numbers to start before sunrise or end after sunset. The outlook takes each day's extremes inside this window.</p>
     </div>
-    <div class="panel">
+    <div class="panel" style="grid-column:1 / -1">
       <h3>Prescription</h3>
       <div class="rxlist" id="rxlist"></div>
       <button class="btn" id="rxAdd">Add criterion</button>
       <button class="btn" id="rxReset">Reset to example</button>
-      <p class="mut small" style="margin:8px 0 0">Every criterion is checked hour by hour. An hour is in prescription when the blended forecast meets all of them. Model agreement is the share of models that put that hour in prescription.</p>
+      <p class="mut small" style="margin:8px 0 0">Each element has a green band (in prescription), a yellow band (caution) and red (out). Every element is checked hour by hour, and an hour counts as in prescription only when all of them are green. KBDI is checked once a day: a yellow or red KBDI day has no hours in prescription. Model agreement is the share of models that put an hour in prescription. Winds use the units set at the top.</p>
     </div>
     <div class="panel">
       <h3>Guidance</h3>
@@ -309,20 +309,39 @@ const F = {
   tw:   { l:"Transport wind", wind:true, dec:0, rx:true },
   twd:  { l:"Transport wind direction", dir:true },
   vr:   { l:"Ventilation rate", u:"m²/s", dec:-2, rx:true, step:500 },
-  di:   { l:"Dispersion index (LDSI)", short:"LDSI", u:"", dec:0 },
+  di:   { l:"Dispersion index (LDSI)", short:"LDSI", u:"", dec:0, rx:true },
   lvori:{ l:"LVORI", short:"LVORI", u:"1–10", dec:0, rx:true },
+  kbdi: { l:"KBDI (Keetch-Byram)", short:"KBDI", u:"", dec:0, rx:true, day:true, step:10 },
   pop:  { l:"Chance of rain", u:"%", dec:0, rx:true },
   pr:   { l:"Rainfall", u:"in", dec:2 },
 };
 F.t.rx = true;
 const UPPER = new Set(["mh","tw","twd","vr"]);   /* need pressure-level data */
-const RX_EXAMPLE = [
-  { f:"rh",  op:">=", v:30 }, { f:"rh", op:"<=", v:55 },
-  { f:"vpd", op:"<=", v:2.0 },
-  { f:"s20", op:">=", v:4/KT2MPH }, { f:"s20", op:"<=", v:15/KT2MPH },
-  { f:"mh",  op:">=", v:1700 }, { f:"tw", op:">=", v:9/KT2MPH },
-  { f:"lvori", op:"band", v:4, v2:6 },
-];
+/* starting green / yellow / red bands for the Cape (display units; winds in mph)
+   le: green at or below v, yellow up to v2, red above
+   ge: green at or above v, yellow down to v2, red below
+   range: green v to v2, yellow y1 to y2, red outside */
+const BAND_DEF = {
+  rh:    { dir:"range", v:30, v2:54, y1:25, y2:64 },
+  vpd:   { dir:"range", v:0.6, v2:2.0, y1:0.4, y2:2.5 },
+  t:     { dir:"le", v:85, v2:92 },
+  s20:   { dir:"range", v:4, v2:12, y1:2, y2:15, mph:true },
+  g20:   { dir:"le", v:18, v2:25, mph:true },
+  mh:    { dir:"ge", v:1700, v2:1000 },
+  tw:    { dir:"range", v:10, v2:20, y1:5, y2:25, mph:true },
+  vr:    { dir:"ge", v:6000, v2:3000 },
+  di:    { dir:"ge", v:41, v2:21 },
+  lvori: { dir:"le", v:4, v2:6 },
+  pop:   { dir:"le", v:20, v2:40 },
+  kbdi:  { dir:"le", v:400, v2:550 },
+};
+function bandDefault(f){
+  const b = BAND_DEF[f] || { dir:"le", v:0, v2:0 }, k = b.mph ? 1/KT2MPH : 1;
+  const c = { f, op:"band", dir:b.dir, v:b.v*k, v2:b.v2*k };
+  if (b.dir === "range"){ c.y1 = b.y1*k; c.y2 = b.y2*k; }
+  return c;
+}
+const RX_EXAMPLE = Object.keys(BAND_DEF).map(bandDefault);
 
 const LS_KEY = "burnoutlook:v1";
 const load = () => { try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch (e) { return {}; } };
@@ -334,6 +353,13 @@ const prefs = Object.assign({
 /* the default burn window became sunrise to sunset: reset the old +1 h / -1 h offsets once */
 if (prefs.winVer !== 2){ prefs.wA = 0; prefs.wB = 0; prefs.winVer = 2; }
 /* LVORI joined the prescription: add it once to saved prescriptions that don't have one */
+if (prefs.rxBands !== 1){ prefs.rx = RX_EXAMPLE.map(c => ({ ...c })); prefs.rxBands = 1; prefs.lvoriRx = 1; }
+/* transport wind defaults moved to green 10-20, yellow 5-25 mph: update saved bands still on the old 9-20 / 7-25 */
+if (prefs.twBand !== 2){
+  const mph = x => Math.round(x*KT2MPH);
+  for (const c of prefs.rx) if (c.f === "tw" && c.op === "band" && c.dir === "range" && mph(c.v) === 9 && mph(c.v2) === 20 && mph(c.y1) === 7 && mph(c.y2) === 25) Object.assign(c, bandDefault("tw"));
+  prefs.twBand = 2;
+}
 if (!prefs.lvoriRx){ if (!prefs.rx.some(c => c.f === "lvori")) prefs.rx.push({ f:"lvori", op:"band", v:4, v2:6 }); prefs.lvoriRx = 1; }
 const save = () => { try { localStorage.setItem(LS_KEY, JSON.stringify(prefs)); } catch (e) {} };
 
@@ -537,11 +563,23 @@ function blendAt(f, i, mem){
   return k ? s/k : null;
 }
 /* LVORI-style bands: green at or below v, yellow up to v2, red above; only green is in prescription */
-const bandOf = (v, c) => { const r = Math.round(v); return r <= c.v ? "go" : r <= c.v2 ? "warn" : "bad"; };
-const passes = (v, c) => v != null && (c.op === "band" ? Math.round(v) <= c.v : c.op === ">=" ? v >= c.v : c.op === ">" ? v > c.v : c.op === "<=" ? v <= c.v : v < c.v);
+function bandOf(v, c){
+  const d = F[c.f], q = x => { const y = dispV(c.f, x); if (d.dec < 0){ const p = Math.pow(10, -d.dec); return Math.round(y/p)*p; } return +y.toFixed(d.dec > 0 ? d.dec : 0); };
+  const x = q(v), a = q(c.v), b = q(c.v2);
+  if (c.dir === "ge") return x >= a ? "go" : x >= b ? "warn" : "bad";
+  if (c.dir === "range") return x >= a && x <= b ? "go" : x >= q(c.y1) && x <= q(c.y2) ? "warn" : "bad";
+  return x <= a ? "go" : x <= b ? "warn" : "bad";
+}
+const passes = (v, c) => v != null && (c.op === "band" ? bandOf(v, c) === "go" : c.op === ">=" ? v >= c.v : c.op === ">" ? v > c.v : c.op === "<=" ? v <= c.v : v < c.v);
+/* whole-day bands (KBDI) by date, filled in by buildOutlook; a day outside its band has no hours in prescription */
+let DAYBAND = {};
+const hourCrit = () => prefs.rx.filter(c => F[c.f] && !F[c.f].day);
 function rxAt(i, mem, blend){
-  const crit = prefs.rx.filter(c => F[c.f]);
-  if (!crit.length) return { blend:null, chance:null };
+  const crit = hourCrit();
+  if (!crit.length && !prefs.rx.length) return { blend:null, chance:null };
+  const db = DAYBAND[G.times[i].slice(0, 10)];
+  if (db && db !== "go") return { blend:false, chance:0, n:mem.length, day:true };
+  if (!crit.length) return { blend:true, chance:100, n:mem.length };
   const okB = crit.every(c => passes(blend[c.f][i], c));
   const elig = mem.filter(m => crit.every(c => m.x[c.f][i] != null));
   const met = elig.filter(m => crit.every(c => passes(m.x[c.f][i], c))).length;
@@ -657,7 +695,12 @@ const dispV = (f, v) => F[f].wind ? v*wf() : v;
 const opTxt = op => ({ ">=":"≥", ">":">", "<=":"≤", "<":"<" })[op] || op;
 const numTxt = (f, v) => { const d = F[f]; return String(+v.toFixed(d.dec > 0 ? d.dec : 1)); };
 function critText(c){ const d = F[c.f];
-  if (c.op === "band") return `${d.short || d.l} ≤ ${c.v} (${c.v + 1 === c.v2 ? c.v2 : `${c.v + 1}–${c.v2}`} caution, ${c.v2 + 1}+ out)`;
+  if (c.op === "band"){
+    const n = x => numTxt(c.f, dispV(c.f, x)), u = unitSfx(c.f), nm = d.short || d.l;
+    if (c.dir === "ge") return `${nm} ≥ ${n(c.v)}${u} (yellow to ${n(c.v2)}${u})`;
+    if (c.dir === "range") return `${nm} ${n(c.v)}–${n(c.v2)}${u} (yellow ${n(c.y1)}–${n(c.y2)}${u})`;
+    return `${nm} ≤ ${n(c.v)}${u} (yellow to ${n(c.v2)}${u})`;
+  }
   return `${d.short || d.l} ${opTxt(c.op)} ${numTxt(c.f, dispV(c.f, c.v))}${d.wind ? " " + prefs.wu : d.u === "%" ? "%" : d.u ? " " + d.u.replace(" AGL", "") : ""}`; }
 /* hourly cell class against the prescription */
 function cellCls(f, v){
@@ -666,28 +709,15 @@ function cellCls(f, v){
   return worst(...cs.map(c => c.op === "band" ? bandOf(v, c) : passes(v, c) ? "go" : "bad"));
 }
 /* daily extreme cell: a "worst" extreme past a limit = at times (amber); a "best" extreme past a limit = never met (red) */
-/* lowest RH in the burn window: fixed bands (green 54% or lower, yellow 55-64%, red 65% or higher),
-   still flagged yellow if it drops below a prescription minimum */
-const RH_BANDS = { yellow:55, red:65 };
-function rhMinCls(v){
-  const r = Math.round(v);
-  let c = r >= RH_BANDS.red ? "bad" : r >= RH_BANDS.yellow ? "warn" : "go";
-  let t = r >= RH_BANDS.red ? `Lowest RH ${r}%: 65% or higher` : r >= RH_BANDS.yellow ? `Lowest RH ${r}%: 55-64%` : `Lowest RH ${r}%: 54% or lower`;
-  const lo = prefs.rx.filter(x => x.f === "rh" && (x.op === ">=" || x.op === ">")).find(x => !passes(v, x));
-  if (lo){ if (c === "go") c = "warn"; t += `; below the prescription minimum (${critText(lo)})`; }
-  return { c, t };
-}
 const d0 = c => F[c.f].short || F[c.f].l;
 function dayCls(f, v, kind){
-  if (f === "rh" && kind === "min" && v != null) return rhMinCls(v);
   const cs = prefs.rx.filter(c => c.f === f); if (!cs.length || v == null) return { c:"", t:"" };
   let cls = "go", tip = [];
   for (const c of cs){
     if (c.op === "band"){
-      /* the day's highest value sets the color; the lowest only matters if even that is out */
-      const b = bandOf(v, c), r = Math.round(v);
-      if (kind === "max"){ if (b !== "go"){ cls = worst(cls, b); tip.push(`${d0(c)} reaches ${r} (${b === "warn" ? "caution" : "out of prescription"})`); } }
-      else if (b !== "go"){ cls = "bad"; tip.push(`${d0(c)} never at or below ${c.v}`); }
+      /* the day's extreme gets its own band color */
+      const b = bandOf(v, c);
+      cls = worst(cls, b); if (b !== "go") tip.push(`${kind === "max" ? "Highest" : kind === "min" ? "Lowest" : "Value"} ${d0(c)} ${fmt(c.f, v)}${unitSfx(c.f)}: ${b === "warn" ? "caution (yellow)" : "out of prescription (red)"}; green is ${critText(c).replace(/^\S+\s*/, "")}`);
       continue;
     }
     if (passes(v, c)) continue;
@@ -881,7 +911,10 @@ function renderEditBar(){
 }
 
 function buildOutlook(){
-  const mem = active(), blend = blendAll(mem), days = outlookDays(), KB = kbdiFor(days.map(d => d.date), mem);
+  const mem = active(), days = outlookDays(), KB = kbdiFor(days.map(d => d.date), mem);
+  const kc = prefs.rx.find(c => c.f === "kbdi" && c.op === "band");
+  DAYBAND = {}; if (kc && KB) for (const d of days){ const k = KB[d.date]; if (k && k.v != null) DAYBAND[d.date] = bandOf(k.v, kc); }
+  const blend = blendAll(mem);
   const cols = days.map(day => {
     const idx = windowHours(day);
     const rx = idx.map(i => rxAt(i, mem, blend));
@@ -904,7 +937,7 @@ function buildOutlook(){
     const nInV = tx.rxh != null && /^\s*\d+/.test(tx.rxh) ? parseInt(tx.rxh, 10) : nIn;
     let rain = rainStat(day.date, mem); const ro = getEd(day.date, "rain"); if (ro != null) rain = { v:ro, lo:ro, hi:ro, edited:true, model:rain };
     const verdict = !prefs.rx.length || (!known && tx.rxh == null) ? "" : nInV >= Math.max(3, idx.length/3) ? "go" : nInV > 0 ? "marg" : "no";
-    return { day, idx, nIn, known, run, peak: chances.length ? Math.max(...chances) : null, vals, model, edited, tx, spread, verdict, lim: limitsOf(idx, blend), kb: KB ? KB[day.date] : null, rain };
+    return { day, idx, nIn, known, run, peak: chances.length ? Math.max(...chances) : null, vals, model, edited, tx, spread, verdict, lim: DAYBAND[day.date] && DAYBAND[day.date] !== "go" ? [{ c:kc, n:idx.length }, ...limitsOf(idx, blend)] : limitsOf(idx, blend), kb: KB ? KB[day.date] : null, kbBand: DAYBAND[day.date] || "", rain };
   });
   return { cols, mem };
 }
@@ -934,6 +967,7 @@ function renderOutlook(){
           disp = String(Math.round(k.v)); modelTxt = String(Math.round(k.model != null ? k.model : k.v)); isEd = k.edited;
           sub = k.obs ? (k.src === "manual" ? "entered" : "FFS") : (Math.round(k.lo) !== Math.round(k.hi) ? `${Math.round(k.lo)}–${Math.round(k.hi)}` : "");
           title = `${k.obs ? "Today's value" : "Forecast"}: ${kbdiCat(k.v)}`;
+          if (c.kbBand){ cls = c.kbBand; if (c.kbBand !== "go") title += `. ${c.kbBand === "warn" ? "Caution (yellow)" : "Out of prescription (red)"}: no hours count as in prescription`; }
         }
       } else if (r.k === "rain"){
         const x = c.rain; disp = x ? x.v.toFixed(2) : "—"; isEd = !!(x && x.edited);
@@ -971,7 +1005,7 @@ function renderOutlook(){
       }, 0);
     });
   });
-  $("legend").innerHTML = prefs.rx.length ? `<span class="lg">Meets the prescription limit</span><span class="lw">Limit missed at some hours</span><span class="lb">Limit missed at every hour</span><span>Lowest RH: green 54% or lower, yellow 55–64%, red 65% or higher</span><span>Gray numbers: range of that value across the models</span>` : `<span>Add prescription criteria below to color the outlook.</span>`;
+  $("legend").innerHTML = prefs.rx.length ? `<span class="lg">In prescription (green band)</span><span class="lw">Caution (yellow band)</span><span class="lb">Out of prescription (red)</span><span>Each cell shows the band of that day's value</span><span>Gray numbers: range of that value across the models</span>` : `<span>Add prescription criteria below to color the outlook.</span>`;
 }
 
 /* ============================================================
@@ -1016,7 +1050,7 @@ function renderHourly(){
     h += "</tr>";
   }
   $("mx").innerHTML = h + "</tbody>";
-  $("legend").innerHTML = prefs.rx.length ? `<span class="lg">Meets every limit on that element</span><span class="lb">Outside a limit</span>${prefs.span === "day" ? "<span>Underlined hours are in the burn window</span>" : ""}` : "";
+  $("legend").innerHTML = prefs.rx.length ? `<span class="lg">In prescription</span><span class="lw">Caution</span><span class="lb">Out of prescription</span>${prefs.span === "day" ? "<span>Underlined hours are in the burn window</span>" : ""}` : "";
 }
 
 /* ============================================================
@@ -1043,7 +1077,7 @@ function downloadCSV(){
     const rx = idx.map(i => rxAt(i, mem, blend));
     lines.push(["in_prescription", ...rx.map(x => x.blend == null ? "" : x.blend ? "yes" : "no")].join(","));
     lines.push(["model_agreement_pct", ...rx.map(x => x.chance ?? "")].join(","));
-    for (const f of Object.keys(F)) lines.push([`${F[f].l} (${F[f].dir ? "dir" : unitOf(f)})`, ...idx.map(i => fmt(f, blend[f][i]))].map(csvCell).join(","));
+    for (const f of Object.keys(F).filter(f => !F[f].day)) lines.push([`${F[f].l} (${F[f].dir ? "dir" : unitOf(f)})`, ...idx.map(i => fmt(f, blend[f][i]))].map(csvCell).join(","));
   }
   const blob = new Blob([lines.join("\n")], { type:"text/csv" }), a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -1060,19 +1094,20 @@ const FILL = { go:[210,236,216], warn:[253,236,186], bad:[251,215,212] };
 const SKY_CATS = [["CLR",0,6],["FEW",6,25],["SCT",25,50],["BKN",50,87],["OVC",87,101]];
 const skyCat = p => p == null ? "" : (SKY_CATS.find(([, a, b]) => p >= a && p < b) || ["OVC"])[0];
 const SKY_WORD = { CLR:"clear", FEW:"mostly clear", SCT:"partly cloudy", BKN:"mostly cloudy", OVC:"cloudy" };
-const RXW = { rh:"humidity", vpd:"VPD", t:"temperature", s20:"20 ft wind", g20:"20 ft peak wind", mh:"mixing height", tw:"transport wind", vr:"ventilation", pop:"rain chance" };
+const RXW = { di:"dispersion (LDSI)", lvori:"LVORI", kbdi:"KBDI", rh:"humidity", vpd:"VPD", t:"temperature", s20:"20 ft wind", g20:"20 ft peak wind", mh:"mixing height", tw:"transport wind", vr:"ventilation", pop:"rain chance" };
 function dshort(date){ const d = new Date(date + "T12:00:00Z"); return d.toLocaleDateString("en-US", { timeZone:"UTC", weekday:"short" }) + " " + d.getUTCDate(); }
 function dmed(date){ const d = new Date(date + "T12:00:00Z"); return d.toLocaleDateString("en-US", { timeZone:"UTC", weekday:"short" }) + " " + d.getUTCDate() + " " + d.toLocaleDateString("en-US", { timeZone:"UTC", month:"short" }); }
 const list = a => a.length < 2 ? (a[0] || "") : a.length === 2 ? `${a[0]} and ${a[1]}` : `${a.slice(0, -1).join(", ")} and ${a[a.length - 1]}`;
-const unitSfx = f => F[f].wind ? " " + prefs.wu : F[f].u === "%" ? "%" : F[f].u === "°F" ? "°F" : F[f].u ? " " + F[f].u.replace(" AGL", "") : "";
+const unitSfx = f => F[f].wind ? " " + prefs.wu : F[f].u === "1–10" ? "" : F[f].u === "%" ? "%" : F[f].u === "°F" ? "°F" : F[f].u ? " " + F[f].u.replace(" AGL", "") : "";
 const valTxt = (f, v) => v == null ? "" : fmt(f, v) + unitSfx(f);
-const critPhrase = c => c.op === "band" ? `${RXW[c.f] || F[c.f].short || F[c.f].l} above ${c.v}` : `${RXW[c.f] || F[c.f].l} ${c.op.startsWith(">") ? "below" : "above"} ${numTxt(c.f, dispV(c.f, c.v))}${unitSfx(c.f)}`;
+const critPhrase = c => c.op === "band" ? (() => { const w = RXW[c.f] || F[c.f].short || F[c.f].l, n = x => numTxt(c.f, dispV(c.f, x)), u = unitSfx(c.f);
+    return c.dir === "ge" ? `${w} below ${n(c.v)}${u}` : c.dir === "range" ? `${w} outside ${n(c.v)}–${n(c.v2)}${u}` : `${w} above ${n(c.v)}${u}`; })() : `${RXW[c.f] || F[c.f].l} ${c.op.startsWith(">") ? "below" : "above"} ${numTxt(c.f, dispV(c.f, c.v))}${unitSfx(c.f)}`;
 const runTxt = run => run ? `${hhmm(run.a)}–${endLabel(run.b)}${tzTag()}` : "";
 const windTxt = (d, s, g) => s == null ? "" : `${d == null ? "" : compass(d) + " "}${fmt("s20", s)}${g != null && Math.round(g*wf()) > Math.round(s*wf()) + 2 ? "G" + fmt("g20", g) : ""}`;
 const tzWord = () => prefs.tz === "Z" ? "UTC" : "local";
 /* which criteria keep the blended forecast out of prescription, most hours first */
 function limitsOf(idx, blend){
-  return prefs.rx.filter(c => F[c.f]).map(c => ({ c, n: idx.filter(i => blend[c.f][i] != null && !passes(blend[c.f][i], c)).length })).filter(x => x.n > 0).sort((a, b) => b.n - a.n);
+  return hourCrit().map(c => ({ c, n: idx.filter(i => blend[c.f][i] != null && !passes(blend[c.f][i], c)).length })).filter(x => x.n > 0).sort((a, b) => b.n - a.n);
 }
 const OJ = {}; OUT_ROWS.forEach((r, j) => { if (r.f) OJ[`${r.f}:${r.s}`] = j; });
 const ov = (c, f, s) => c.vals[OJ[`${f}:${s}`]];
@@ -1145,7 +1180,7 @@ function discAuto(){ return prefs.view === "outlook" ? (OUT ? discOutlook(OUT) :
 function discText(){ const k = discKey(); return prefs.disc && prefs.disc[k] != null ? prefs.disc[k] : discAuto(); }
 function rxSummary(){
   if (!prefs.rx.length) return "No prescription set.";
-  const crit = "Prescription: " + prefs.rx.filter(c => F[c.f]).map(critText).join("; ") + ".";
+  const crit = "Prescription (green): " + prefs.rx.filter(c => F[c.f]).map(critText).join("; ") + ".";
   if (prefs.view === "outlook"){
     const ok = OUT.cols.filter(c => c.run);
     return crit + (ok.length ? ` In prescription: ${ok.map(c => `${dshort(c.day.date)} ${runTxt(c.run)}${c.nIn > c.run.n ? ` (${c.nIn} h)` : ""}`).join("; ")}.` : " No hour in this period is in prescription.");
@@ -1176,14 +1211,14 @@ function product(){
         { t: fmt("vpd", ov(c, "vpd", "max")), f: dc("vpd", "max") }, { t: wind, f: worst(dc("s20", "min"), dc("s20", "max"), dc("g20", "max")) },
         { t: fmt("mh", ov(c, "mh", "max")), f: dc("mh", "max") }, { t: ov(c, "tw", "max") == null ? "" : `${compass(ov(c, "twd", "atmax"))} ${fmt("tw", ov(c, "tw", "max"))}`, f: dc("tw", "max") },
         { t: fmt("vr", ov(c, "vr", "max")), f: dc("vr", "max") }, { t: fmt("pop", ov(c, "pop", "max")), f: dc("pop", "max") },
-        { t: c.kb && c.kb.v != null ? Math.round(c.kb.v) : "", b: !!(c.kb && c.kb.obs) },
+        { t: c.kb && c.kb.v != null ? Math.round(c.kb.v) : "", b: !!(c.kb && c.kb.obs), f: c.kbBand },
         { t: fmt("lvori", ov(c, "lvori", "max")), f: dc("lvori", "max") } ] };
     });
     const first = cols[0], last = cols[cols.length - 1];
     return { ...base, title:"Fire Weather Planning Forecast", kind:"outlook",
       valid: first ? `${dmed(first.day.date)} – ${dmed(last.day.date)}, daily burn windows` : "",
       head, wts, rows,
-      notes: `Each row covers that day's burn window, ${winText()}. Values are extremes inside the window from blended ${OUT.mem.map(m => m.n).join(", ")} guidance: high temperature, lowest RH, highest VPD, 20 ft sustained range with peak (G), highest mixing height, strongest transport wind, best ventilation and highest rain chance. KBDI: today's Florida Forest Service Brevard County value (bold), later days forecast with the Keetch-Byram equation from forecast highs and rain. LVORI: highest in the window, 1 (lowest) to 10 (highest) risk of low visibility in smoke or fog, from the MFL table using RH and the Lavdas dispersion index. Hrs in Rx: hours the blended forecast meets every criterion. Green meets the limit, amber misses it at some hours, red misses it at every hour. Min RH: green 54% or lower, amber 55-64%, red 65% or higher. VPD: vapor pressure deficit.` };
+      notes: `Each row covers that day's burn window, ${winText()}. Values are extremes inside the window from blended ${OUT.mem.map(m => m.n).join(", ")} guidance: high temperature, lowest RH, highest VPD, 20 ft sustained range with peak (G), highest mixing height, strongest transport wind, best ventilation and highest rain chance. KBDI: today's Florida Forest Service Brevard County value (bold), later days forecast with the Keetch-Byram equation from forecast highs and rain. LVORI: highest in the window, 1 (lowest) to 10 (highest) risk of low visibility in smoke or fog, from the MFL table using RH and the Lavdas dispersion index. Hrs in Rx: hours the blended forecast meets every criterion. Colors are the prescription bands for each value: green in prescription, amber caution, red out. Only green hours count as in prescription. VPD: vapor pressure deficit.` };
   }
   const { idx, blend, mem, day, col } = HR;
   const head = ["Time","Sky","Temp °F","RH %","VPD kPa","20 ft wind","Mix ht ft","Transport","Vent m²/s","Rain %","LVORI","In Rx"];
@@ -1330,37 +1365,32 @@ function renderSites(){
   $("sites").innerHTML = all.map(p => `<button type="button" data-s="${p.id}" aria-pressed="${p.id === prefs.site}">${esc(p.name)}</button>`).join("");
   $("sites").querySelectorAll("button").forEach(b => b.onclick = () => { if (prefs.site === b.dataset.s) return; prefs.site = b.dataset.s; save(); renderSites(); fetchGuidance(); });
 }
+function normBand(c){
+  if (c.f === "lvori"){ for (const k of ["v", "v2", "y1", "y2"]) if (c[k] != null) c[k] = Math.max(1, Math.min(10, Math.round(c[k]))); }
+  if (c.dir === "ge"){ if (c.v2 > c.v) c.v2 = c.v; }
+  else if (c.dir === "range"){ if (c.v > c.v2) [c.v, c.v2] = [c.v2, c.v]; if (c.y1 > c.v) c.y1 = c.v; if (c.y2 < c.v2) c.y2 = c.v2; }
+  else if (c.v2 < c.v) c.v2 = c.v;
+}
 function renderRx(){
-  const opts = Object.keys(F).filter(k => F[k].rx);
+  const opts = Object.keys(BAND_DEF).filter(k => F[k] && F[k].rx);
+  /* any old single-limit criterion becomes that element's default band */
+  prefs.rx = prefs.rx.map(c => c.op === "band" ? c : bandDefault(BAND_DEF[c.f] ? c.f : "rh"));
   $("rxlist").innerHTML = prefs.rx.map((c, j) => {
-    const d = F[c.f] || {};
-    if (c.op === "band") return `<div class="rxrow" data-j="${j}">
-      <select data-k="f">${opts.map(k => `<option value="${k}"${k === c.f ? " selected" : ""}>${esc(F[k].l)}</option>`).join("")}</select>
-      <span class="band go">green ≤</span><input type="number" data-k="v" value="${c.v}" step="1" min="1" max="10" style="width:56px">
-      <span class="band warn">yellow ≤</span><input type="number" data-k="v2" value="${c.v2}" step="1" min="1" max="10" style="width:56px">
-      <span class="band bad">red above</span>
-      <button type="button" data-k="x" title="Remove" aria-label="Remove criterion">×</button></div>`;
-    return `<div class="rxrow" data-j="${j}">
-      <select data-k="f">${opts.map(k => `<option value="${k}"${k === c.f ? " selected" : ""}>${esc(F[k].l)}</option>`).join("")}</select>
-      <select data-k="op">${[">=","<="].map(o => `<option value="${o}"${o === c.op ? " selected" : ""}>${opTxt(o)}</option>`).join("")}</select>
-      <input type="number" data-k="v" value="${numTxt(c.f, dispV(c.f, c.v))}" step="${d.step || 1}">
-      <span class="unit">${esc(unitOf(c.f))}</span>
-      <button type="button" data-k="x" title="Remove" aria-label="Remove criterion">×</button></div>`;
-  }).join("") || `<p class="mut small" style="margin:0">No criteria. The outlook still shows the daily extremes.</p>`;
+    const d = F[c.f], n = x => numTxt(c.f, dispV(c.f, x));
+    const inp = k => `<input type="number" data-k="${k}" value="${n(c[k])}" step="${d.step || (d.dec > 0 ? Math.pow(10, -d.dec)*10 : 1)}" style="width:${d.dec < 0 || c.f === "kbdi" ? 76 : 60}px" aria-label="${esc(d.l)} ${k}">`;
+    const sel = `<select data-k="f">${opts.map(k => `<option value="${k}"${k === c.f ? " selected" : ""}>${esc(F[k].l)}</option>`).join("")}</select>`;
+    const mid = c.dir === "ge" ? `<span class="band go">green ≥</span>${inp("v")}<span class="band warn">yellow ≥</span>${inp("v2")}<span class="band bad">red below</span>`
+      : c.dir === "range" ? `<span class="band go">green</span>${inp("v")}<span class="unit">to</span>${inp("v2")}<span class="band warn">yellow</span>${inp("y1")}<span class="unit">to</span>${inp("y2")}<span class="band bad">red outside</span>`
+      : `<span class="band go">green ≤</span>${inp("v")}<span class="band warn">yellow ≤</span>${inp("v2")}<span class="band bad">red above</span>`;
+    return `<div class="rxrow" data-j="${j}">${sel}${mid}<span class="unit">${esc(unitOf(c.f))}</span><button type="button" data-k="x" title="Remove" aria-label="Remove criterion">×</button></div>`;
+  }).join("") || `<p class="mut small" style="margin:0">No criteria. The planning forecast still shows the daily extremes.</p>`;
   $("rxlist").querySelectorAll(".rxrow").forEach(row => {
     const j = +row.dataset.j, c = prefs.rx[j];
-    if (c.op === "band"){
-      /* switching away from LVORI turns it into a plain "at or below" limit */
-      row.querySelector('[data-k="f"]').onchange = e => { c.f = e.target.value; if (c.f !== "lvori"){ c.op = "<="; delete c.v2; if (F[c.f].wind) c.v = c.v/wf(); } changed(true); };
-      const clampI = x => Math.max(1, Math.min(10, Math.round(x)));
-      row.querySelector('[data-k="v"]').onchange = e => { const v = parseFloat(e.target.value); if (!isFinite(v)) return; c.v = clampI(v); if (c.v2 < c.v) c.v2 = c.v; changed(true); };
-      row.querySelector('[data-k="v2"]').onchange = e => { const v = parseFloat(e.target.value); if (!isFinite(v)) return; c.v2 = clampI(v); if (c.v2 < c.v) c.v = c.v2; changed(true); };
-      row.querySelector('[data-k="x"]').onclick = () => { prefs.rx.splice(j, 1); changed(true); };
-      return;
-    }
-    row.querySelector('[data-k="f"]').onchange = e => { const v = dispV(c.f, c.v); c.f = e.target.value; if (c.f === "lvori"){ c.op = "band"; c.v = 4; c.v2 = 6; changed(true); return; } c.v = F[c.f].wind ? v/wf() : v; changed(true); };
-    row.querySelector('[data-k="op"]').onchange = e => { c.op = e.target.value; changed(); };
-    row.querySelector('[data-k="v"]').onchange = e => { const v = parseFloat(e.target.value); if (!isFinite(v)) return; c.v = F[c.f].wind ? v/wf() : v; changed(); };
+    row.querySelector('[data-k="f"]').onchange = e => { prefs.rx[j] = bandDefault(e.target.value); changed(true); };
+    row.querySelectorAll('input[data-k]').forEach(inp => inp.onchange = () => {
+      const v = parseFloat(inp.value); if (!isFinite(v)){ renderRx(); return; }
+      c[inp.dataset.k] = F[c.f].wind ? v/wf() : v; normBand(c); changed(true);
+    });
     row.querySelector('[data-k="x"]').onclick = () => { prefs.rx.splice(j, 1); changed(true); };
   });
 }
@@ -1477,7 +1507,7 @@ function init(){
   $("annRain").onchange = () => { const v = parseFloat($("annRain").value); prefs.annRain = v > 0 ? v : 50; $("annRain").value = prefs.annRain; changed(); };
   $("wA").onchange = () => { const v = parseFloat($("wA").value); prefs.wA = isFinite(v) ? v : 0; changed(); };
   $("wB").onchange = () => { const v = parseFloat($("wB").value); prefs.wB = isFinite(v) ? v : 0; changed(); };
-  $("rxAdd").onclick = () => { prefs.rx.push({ f:"vpd", op:"<=", v:2.0 }); changed(true); };
+  $("rxAdd").onclick = () => { const f = Object.keys(BAND_DEF).find(k => !prefs.rx.some(c => c.f === k)) || "rh"; prefs.rx.push(bandDefault(f)); changed(true); };
   $("rxReset").onclick = () => { prefs.rx = RX_EXAMPLE.map(c => ({ ...c })); changed(true); };
   $("viewSel").onclick = e => { const b = e.target.closest("[data-v]"); if (!b) return; prefs.view = b.dataset.v; save(); render(); };
   $("spanSel").onclick = e => { const b = e.target.closest("[data-s]"); if (!b) return; prefs.span = b.dataset.s; save(); render(); };
