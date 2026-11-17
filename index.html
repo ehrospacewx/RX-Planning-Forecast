@@ -95,9 +95,12 @@ table.mx td.edited .rg{color:var(--acc);font-style:italic}
 .legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--mut);margin-top:8px}
 .legend span::before{content:"";display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px;border:1px solid var(--rule)}
 .legend .lg::before{background:var(--go)}.legend .lw::before{background:var(--warn)}.legend .lb::before{background:var(--bad)}
-.setup{display:grid;grid-template-columns:minmax(300px,1fr) minmax(0,2fr);gap:14px;align-items:start}
-.setup .wide{grid-column:1 / -1}
-@media (max-width:1000px){ .setup{grid-template-columns:1fr} }
+/* left column: burn unit, then guidance stretching to the bottom of the prescription panel on the right */
+.setup{display:grid;grid-template-columns:minmax(300px,1fr) minmax(0,2fr);grid-template-rows:auto 1fr;gap:14px}
+.setup .p-unit{grid-column:1;grid-row:1}
+.setup .p-guide{grid-column:1;grid-row:2}
+.setup .p-rx{grid-column:2;grid-row:1 / 3}
+@media (max-width:1000px){ .setup{grid-template-columns:1fr;grid-template-rows:none} .setup .p-unit,.setup .p-guide,.setup .p-rx{grid-column:1;grid-row:auto} }
 .field{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0;font-size:14px}
 .field label{display:flex;gap:6px;align-items:center}
 input[type=text],input[type=number],select{border:1px solid var(--rule);border-radius:6px;padding:4px 7px;background:var(--panel);color:var(--ink);font:inherit;font-size:14px}
@@ -231,7 +234,7 @@ input[type=number]{width:84px}
   </section>
 
   <section class="setup noprint">
-    <div class="panel">
+    <div class="panel p-unit">
       <h3>Burn unit and window</h3>
       <div class="field"><label>Name <input type="text" id="cName" maxlength="40" style="width:190px"></label></div>
       <div class="field"><label>Lat <input type="number" id="cLat" step="0.0001"></label><label>Lon <input type="number" id="cLon" step="0.0001"></label><button class="btn" id="cGo">Use this point</button></div>
@@ -241,14 +244,14 @@ input[type=number]{width:84px}
       <p class="mut small" id="kbdiNote" style="margin:2px 0 6px"></p>
       <p class="mut small" style="margin:6px 0 0">Leave KBDI blank to use the Florida Forest Service value. Use negative numbers to start before sunrise or end after sunset. The outlook takes each day's extremes inside this window.</p>
     </div>
-    <div class="panel">
+    <div class="panel p-rx">
       <h3>Prescription</h3>
       <div class="rxlist" id="rxlist"></div>
       <button class="btn" id="rxAdd">Add criterion</button>
       <button class="btn" id="rxReset">Reset to example</button>
       <p class="mut small" style="margin:8px 0 0">Each element has a green band (in prescription), a yellow band (caution) and red (out). Every element is checked hour by hour, and an hour counts as in prescription only when all of them are green. KBDI is checked once a day: a yellow or red KBDI day has no hours in prescription. Model agreement is the share of models that put an hour in prescription. Winds use the units set at the top.</p>
     </div>
-    <div class="panel wide">
+    <div class="panel p-guide">
       <h3>Guidance</h3>
       <div class="models" id="models"></div>
       <p class="mut small" style="margin:8px 0 0">NBM supplies surface elements only, so it is left out of the mixing height, transport wind and ventilation rows and from model agreement whenever the prescription uses them.</p>
